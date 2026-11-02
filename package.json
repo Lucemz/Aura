@@ -10,8 +10,9 @@
     "preview": "vite preview",
     "electron": "electron electron/main.cjs",
     "app": "npm run build && electron electron/main.cjs",
-    "dist": "npm run build && electron-builder --mac --arm64",
-    "dist:all": "npm run build && electron-builder --mac --arm64"
+    "dist": "bash macos/build-safari-release.sh",
+    "dist:safari": "bash macos/build-safari-release.sh",
+    "dist:electron": "npm run build && electron-builder --mac --arm64"
   },
   "build": {
     "appId": "com.aura.music",

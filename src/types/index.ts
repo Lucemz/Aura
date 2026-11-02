@@ -1,3 +1,12 @@
+export type AudioPreset = 'flat' | 'bass' | 'vocal' | 'warm';
+
+export interface UserProfile {
+  loggedIn: boolean;
+  name?: string;
+  email?: string;
+  avatar?: string;
+}
+
 export interface ImportedTrack {
   id?: string;
   title: string;
@@ -51,12 +60,7 @@ export interface TransferLogItem {
 declare global {
   interface Window {
     auraAPI?: {
-      getUserProfile: () => Promise<{
-        loggedIn: boolean;
-        name?: string;
-        email?: string;
-        avatar?: string;
-      }>;
+      getUserProfile: () => Promise<UserProfile>;
       getSapisidAuthHeader: () => Promise<string | null>;
       openGoogleLogin: () => Promise<boolean>;
       logout: () => Promise<boolean>;
@@ -102,6 +106,15 @@ declare global {
         action: 'toggle-play' | 'next' | 'previous',
         callback: () => void
       ) => () => void;
+
+      // Native Safari WKWebView bridge methods
+      isSafariEngine?: boolean;
+      setOverlayExpanded?: (expanded: boolean) => void;
+      webviewGoBack?: () => void;
+      webviewGoForward?: () => void;
+      webviewReload?: () => void;
+      webviewLoadURL?: (url: string) => void;
+      webviewEvalJS?: (code: string) => Promise<any>;
     };
   }
 }
