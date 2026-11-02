@@ -435,13 +435,13 @@ export const App: React.FC = () => {
             </button>
           )}
 
-          {/* Primary Value-Add Button: Spotify & Apple Music Importer */}
+          {/* Primary Value-Add Button: Spotify Importer */}
           <button
             onClick={() => setIsImporterOpen(true)}
-            className="px-3 py-1 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+            className="px-3 py-1 rounded-lg bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Importar de Spotify / Apple Music</span>
+            <span>Importar desde Spotify</span>
           </button>
 
           {/* Mini-Player Toggle */}

@@ -1,17 +1,61 @@
 const https = require('https');
-const { BrowserWindow, session } = require('electron');
-const {
-  loginSpotifyViaExternalBrowser,
-  loginAppleMusicViaExternalBrowser,
-} = require('./browserAuth.cjs');
+const http = require('http');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { app, shell } = require('electron');
+const { loginAppleMusicViaExternalBrowser } = require('./browserAuth.cjs');
 
 const CHROME_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-// Cached tokens in memory for active session
+// Official Spotify Desktop Client ID for OAuth 2.0 PKCE Authorization Flow
+const SPOTIFY_CLIENT_ID = '65b708073fc0480ea92a077233ca87bd';
+const SPOTIFY_SCOPES = [
+  'user-library-read',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+  'user-read-private',
+  'user-read-email',
+].join(' ');
+
 let spotifyBearerToken = null;
+let spotifyRefreshToken = null;
 let appleBearerToken = null;
 let appleMediaUserToken = null;
+let activeOauthServer = null;
+
+function getSpotifyTokenCachePath() {
+  return path.join(app.getPath('userData'), 'spotify-oauth-token.json');
+}
+
+function saveSpotifyTokensToDisk(tokenData) {
+  try {
+    fs.writeFileSync(
+      getSpotifyTokenCachePath(),
+      JSON.stringify({
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token || spotifyRefreshToken,
+        expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+      }),
+      'utf8'
+    );
+  } catch (e) {}
+}
+
+function loadSpotifyTokensFromDisk() {
+  try {
+    const file = getSpotifyTokenCachePath();
+    if (!fs.existsSync(file)) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (data.accessToken && data.expiresAt && Date.now() < data.expiresAt - 60000) {
+      spotifyBearerToken = data.accessToken;
+      spotifyRefreshToken = data.refreshToken;
+      return data.accessToken;
+    }
+  } catch (e) {}
+  return null;
+}
 
 /**
  * Simple HTTPS GET helper returning parsed JSON or raw text
@@ -50,118 +94,213 @@ function httpsGet(url, headers = {}) {
   });
 }
 
+/**
+ * Simple HTTPS POST x-www-form-urlencoded helper for OAuth token exchange
+ */
+function httpsPostForm(url, paramsObj) {
+  return new Promise((resolve, reject) => {
+    const postData = new URLSearchParams(paramsObj).toString();
+    const parsedUrl = new URL(url);
+    const req = https.request(
+      {
+        hostname: parsedUrl.hostname,
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(postData),
+          'User-Agent': CHROME_UA,
+          Accept: 'application/json',
+        },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => {
+          try {
+            resolve({ statusCode: res.statusCode, data: JSON.parse(body), raw: body });
+          } catch (e) {
+            resolve({ statusCode: res.statusCode, data: null, raw: body });
+          }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
+  });
+}
+
 // ============================================================================
-// 1. SPOTIFY ACCOUNT CONNECTION & LIBRARY READER
+// 1. SPOTIFY OAUTH 2.0 PKCE AUTHORIZATION FLOW (OFFICIAL PERMISSION GRANT)
 // ============================================================================
 
 /**
- * Opens Spotify Web Login Popup, captures the Web Player Bearer token automatically,
- * and returns the user's Liked Songs, Playlists, and Saved Albums.
+ * Starts a local loopback callback server on 127.0.0.1, opens Spotify's official OAuth
+ * Permission Consent screen in the user's browser, receives the ?code=... callback,
+ * exchanges it via PKCE for an OAuth access_token, and reads the user's library.
  */
-async function connectSpotifyAccount(parentWindow) {
-  try {
-    const extToken = await loginSpotifyViaExternalBrowser();
-    if (extToken) {
-      spotifyBearerToken = extToken;
-      const library = await fetchSpotifyUserLibrary(spotifyBearerToken);
-      return { ok: true, ...library };
+async function connectSpotifyAccount(parentWindow, forceReauth = false) {
+  // Check if we already have a valid cached OAuth token (unless user clicked Recargar/Reconectar)
+  if (!forceReauth) {
+    const cached = loadSpotifyTokensFromDisk();
+    if (cached) {
+      const lib = await fetchSpotifyUserLibrary(cached);
+      if (lib.likedSongs.length > 0 || lib.playlists.length > 0) {
+        return { ok: true, ...lib };
+      }
     }
-  } catch (e) {
-    console.warn('[Spotify Importer] External browser fallback:', e.message);
   }
 
-  return new Promise((resolve) => {
-    const sess = session.fromPartition('persist:spotify_import');
-    let resolved = false;
+  if (activeOauthServer) {
+    try {
+      activeOauthServer.close();
+    } catch (e) {}
+    activeOauthServer = null;
+  }
 
-    const finish = async (token) => {
+  // Generate PKCE Code Verifier & S256 Code Challenge
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = (result) => {
       if (resolved) return;
       resolved = true;
-      if (token) spotifyBearerToken = token;
-      try {
-        if (!win.isDestroyed()) win.close();
-      } catch (e) {}
-
-      if (spotifyBearerToken) {
-        const library = await fetchSpotifyUserLibrary(spotifyBearerToken);
-        resolve({ ok: true, ...library });
-      } else {
-        resolve({ ok: false, error: 'No se detectó sesión activa de Spotify.' });
+      if (activeOauthServer) {
+        try {
+          activeOauthServer.close();
+        } catch (e) {}
+        activeOauthServer = null;
       }
+      if (parentWindow && !parentWindow.isDestroyed()) {
+        parentWindow.show();
+        parentWindow.focus();
+      }
+      resolve(result);
     };
 
-    // Intercept outgoing requests to api.spotify.com to capture the official web player Bearer token
-    sess.webRequest.onBeforeSendHeaders(
-      { urls: ['*://api.spotify.com/*', '*://api-partner.spotify.com/*'] },
-      (details, callback) => {
-        const auth =
-          details.requestHeaders['Authorization'] || details.requestHeaders['authorization'];
-        if (auth && auth.startsWith('Bearer ') && auth.length > 30) {
-          const token = auth.replace('Bearer ', '').trim();
-          if (!spotifyBearerToken || spotifyBearerToken !== token) {
-            console.log('[Spotify Importer] Captured live Bearer token from Spotify Web Player!');
-            spotifyBearerToken = token;
-            if (!resolved) {
-              setTimeout(() => finish(token), 600);
-            }
+    const server = http.createServer(async (req, res) => {
+      try {
+        const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+        if (reqUrl.pathname === '/login') {
+          const code = reqUrl.searchParams.get('code');
+          const error = reqUrl.searchParams.get('error');
+
+          if (error || !code) {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+              <html>
+                <body style="background:#121212;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                  <div style="text-align:center;padding:32px;background:#181818;border-radius:16px;border:1px solid #333;">
+                    <h2 style="color:#ef4444;">Autorización cancelada</h2>
+                    <p style="color:#aaa;">No se concedieron permisos en Spotify. Puedes cerrar esta pestaña.</p>
+                  </div>
+                </body>
+              </html>
+            `);
+            return finish({ ok: false, error: 'Autorización de Spotify cancelada por el usuario.' });
           }
-        }
-        callback({ requestHeaders: details.requestHeaders });
-      }
-    );
 
-    const win = new BrowserWindow({
-      width: 540,
-      height: 700,
-      center: true,
-      parent: parentWindow || undefined,
-      title: 'Conectar con Spotify — Inicia sesión para importar tu música',
-      backgroundColor: '#121212',
-      webPreferences: {
-        partition: 'persist:spotify_import',
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-    });
-
-    win.webContents.setUserAgent(CHROME_UA);
-    win.loadURL('https://accounts.spotify.com/es/login?continue=https%3A%2F%2Fopen.spotify.com%2F');
-
-    // Also try extracting token directly from open.spotify.com when loaded
-    win.webContents.on('did-finish-load', async () => {
-      const url = win.webContents.getURL();
-      if (url.startsWith('https://open.spotify.com')) {
-        try {
-          const tokenData = await win.webContents.executeJavaScript(`
-            fetch('https://open.spotify.com/get_access_token?reason=transport&productType=web_player', { credentials: 'include' })
-              .then(r => r.json())
-              .catch(() => null)
+          // Respond immediately with success screen in browser
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(`
+            <html>
+              <body style="background:#121212;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                <div style="text-align:center;padding:36px;background:#181818;border-radius:20px;border:1px solid #1DB954;">
+                  <div style="width:56px;height:56px;border-radius:50%;background:#1DB954;color:#000;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:bold;margin:0 auto 16px;">✓</div>
+                  <h2 style="margin:0 0 8px 0;">¡Permisos de Spotify concedidos!</h2>
+                  <p style="color:#aaa;font-size:14px;margin:0;">Tus canciones y playlists se están cargando en Aura Music. Ya puedes cerrar esta pestaña.</p>
+                  <script>setTimeout(() => window.close(), 1200);</script>
+                </div>
+              </body>
+            </html>
           `);
-          if (tokenData && tokenData.accessToken) {
-            console.log('[Spotify Importer] Extracted accessToken via get_access_token!');
-            finish(tokenData.accessToken);
+
+          const port = server.address().port;
+          const redirectUri = `http://127.0.0.1:${port}/login`;
+
+          console.log('[Spotify OAuth] Exchanging authorization code for OAuth token...');
+          const tokenRes = await httpsPostForm('https://accounts.spotify.com/api/token', {
+            client_id: SPOTIFY_CLIENT_ID,
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: redirectUri,
+            code_verifier: codeVerifier,
+          });
+
+          if (tokenRes.data && tokenRes.data.access_token) {
+            spotifyBearerToken = tokenRes.data.access_token;
+            spotifyRefreshToken = tokenRes.data.refresh_token || null;
+            saveSpotifyTokensToDisk(tokenRes.data);
+            console.log('[Spotify OAuth] Token obtained! Fetching user library...');
+            const library = await fetchSpotifyUserLibrary(spotifyBearerToken);
+            return finish({ ok: true, ...library });
+          } else {
+            console.error('[Spotify OAuth] Token exchange failed:', tokenRes.raw);
+            return finish({
+              ok: false,
+              error:
+                tokenRes.data?.error_description ||
+                'No se pudo canjear el código de autorización con Spotify.',
+            });
           }
-        } catch (e) {}
+        }
+      } catch (err) {
+        console.error('[Spotify OAuth] Callback error:', err);
+        finish({ ok: false, error: err.message });
       }
     });
 
-    win.on('closed', () => {
-      if (!resolved) {
-        resolved = true;
-        if (spotifyBearerToken) {
-          fetchSpotifyUserLibrary(spotifyBearerToken).then((lib) =>
-            resolve({ ok: true, ...lib })
-          );
-        } else {
-          resolve({ ok: false, error: 'Ventana cerrada antes de completar el acceso.' });
-        }
-      }
+    activeOauthServer = server;
+
+    // Listen on 127.0.0.1:8898 (or random free port if 8898 is busy)
+    server.listen(8898, '127.0.0.1', () => {
+      const port = server.address().port;
+      const redirectUri = `http://127.0.0.1:${port}/login`;
+
+      const authUrl = new URL('https://accounts.spotify.com/authorize');
+      authUrl.searchParams.set('client_id', SPOTIFY_CLIENT_ID);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('redirect_uri', redirectUri);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
+      authUrl.searchParams.set('code_challenge', codeChallenge);
+      authUrl.searchParams.set('scope', SPOTIFY_SCOPES);
+      authUrl.searchParams.set('show_dialog', 'true');
+
+      console.log('[Spotify OAuth] Opening authorization consent screen in browser:', authUrl.toString());
+      shell.openExternal(authUrl.toString());
     });
+
+    server.on('error', () => {
+      // Fallback to any free port on 127.0.0.1
+      server.listen(0, '127.0.0.1', () => {
+        const port = server.address().port;
+        const redirectUri = `http://127.0.0.1:${port}/login`;
+
+        const authUrl = new URL('https://accounts.spotify.com/authorize');
+        authUrl.searchParams.set('client_id', SPOTIFY_CLIENT_ID);
+        authUrl.searchParams.set('response_type', 'code');
+        authUrl.searchParams.set('redirect_uri', redirectUri);
+        authUrl.searchParams.set('code_challenge_method', 'S256');
+        authUrl.searchParams.set('code_challenge', codeChallenge);
+        authUrl.searchParams.set('scope', SPOTIFY_SCOPES);
+        authUrl.searchParams.set('show_dialog', 'true');
+
+        shell.openExternal(authUrl.toString());
+      });
+    });
+
+    // Timeout after 3 minutes if user never completes authorization
+    setTimeout(() => {
+      finish({ ok: false, error: 'Tiempo de espera agotado para autorizar en el navegador.' });
+    }, 180000);
   });
 }
 
 /**
- * Fetches User Profile, Liked Songs, Playlists, and Albums from Spotify Web API
+ * Fetches User Profile, Liked Songs, Playlists, and Albums from Spotify Web API using OAuth Bearer token
  */
 async function fetchSpotifyUserLibrary(token = spotifyBearerToken) {
   if (!token) return { profile: null, likedSongs: [], playlists: [], albums: [] };
@@ -180,16 +319,22 @@ async function fetchSpotifyUserLibrary(token = spotifyBearerToken) {
           name: meRes.data.display_name || meRes.data.id || 'Usuario Spotify',
           avatar: meRes.data.images?.[0]?.url || '',
         }
-      : { name: 'Cuenta Spotify Conectada', avatar: '' };
+      : { name: 'Cuenta Spotify Autorizada', avatar: '' };
 
-    // Parse Liked Songs (fetch up to 200 liked songs if user has more pages)
+    // Fetch up to 200 Liked Songs across pages
     let likedItems = tracksRes.data?.items || [];
     const totalLiked = tracksRes.data?.total || likedItems.length;
     if (tracksRes.data?.next && likedItems.length < 200) {
-      const page2 = await httpsGet('https://api.spotify.com/v1/me/tracks?limit=50&offset=50', headers).catch(() => null);
+      const page2 = await httpsGet(
+        'https://api.spotify.com/v1/me/tracks?limit=50&offset=50',
+        headers
+      ).catch(() => null);
       if (page2?.data?.items) likedItems = [...likedItems, ...page2.data.items];
       if (page2?.data?.next) {
-        const page3 = await httpsGet('https://api.spotify.com/v1/me/tracks?limit=50&offset=100', headers).catch(() => null);
+        const page3 = await httpsGet(
+          'https://api.spotify.com/v1/me/tracks?limit=50&offset=100',
+          headers
+        ).catch(() => null);
         if (page3?.data?.items) likedItems = [...likedItems, ...page3.data.items];
       }
     }
@@ -242,6 +387,10 @@ async function fetchSpotifyUserLibrary(token = spotifyBearerToken) {
       })
       .filter(Boolean);
 
+    console.log(
+      `[Spotify OAuth] Loaded ${likedSongs.length} liked songs, ${playlists.length} playlists, ${albums.length} albums!`
+    );
+
     return {
       profile,
       totalLiked,
@@ -256,9 +405,12 @@ async function fetchSpotifyUserLibrary(token = spotifyBearerToken) {
 }
 
 /**
- * Fetches all tracks inside a specific Spotify Playlist
+ * Fetches all tracks inside a specific Spotify Playlist using the OAuth Bearer token
  */
 async function getSpotifyPlaylistTracks(playlistId) {
+  if (!spotifyBearerToken) {
+    loadSpotifyTokensFromDisk();
+  }
   if (spotifyBearerToken) {
     try {
       const headers = { Authorization: `Bearer ${spotifyBearerToken}` };
@@ -283,7 +435,6 @@ async function getSpotifyPlaylistTracks(playlistId) {
     } catch (e) {}
   }
 
-  // Fallback to public embed scraper
   const parsed = await parseExternalMusicUrl(`https://open.spotify.com/playlist/${playlistId}`);
   return parsed.tracks || [];
 }
@@ -292,11 +443,7 @@ async function getSpotifyPlaylistTracks(playlistId) {
 // 2. APPLE MUSIC ACCOUNT CONNECTION & LIBRARY READER
 // ============================================================================
 
-/**
- * Opens Apple Music Web Login Popup, captures Developer Authorization & Media-User-Token,
- * and returns the user's Library Songs, Playlists, and Albums.
- */
-async function connectAppleMusicAccount(parentWindow) {
+async function connectAppleMusicAccount() {
   try {
     const extTokens = await loginAppleMusicViaExternalBrowser();
     if (extTokens && extTokens.developerToken && extTokens.musicUserToken) {
@@ -305,86 +452,13 @@ async function connectAppleMusicAccount(parentWindow) {
       const library = await fetchAppleMusicLibrary();
       return { ok: true, ...library };
     }
-  } catch (e) {
-    console.warn('[Apple Importer] External browser fallback:', e.message);
-  }
-
-  return new Promise((resolve) => {
-    const sess = session.fromPartition('persist:apple_import');
-    let resolved = false;
-
-    const finish = async () => {
-      if (resolved) return;
-      resolved = true;
-      try {
-        if (!win.isDestroyed()) win.close();
-      } catch (e) {}
-
-      if (appleBearerToken && appleMediaUserToken) {
-        const library = await fetchAppleMusicLibrary();
-        resolve({ ok: true, ...library });
-      } else {
-        resolve({
-          ok: false,
-          error: 'Inicia sesión en tu cuenta de Apple Music dentro de la ventana para sincronizar.',
-        });
-      }
+    return {
+      ok: false,
+      error: 'No se completó la autorización en Apple Music.',
     };
-
-    sess.webRequest.onBeforeSendHeaders(
-      { urls: ['*://amp-api.music.apple.com/*'] },
-      (details, callback) => {
-        const auth =
-          details.requestHeaders['Authorization'] || details.requestHeaders['authorization'];
-        const mut =
-          details.requestHeaders['Media-User-Token'] ||
-          details.requestHeaders['media-user-token'] ||
-          details.requestHeaders[' Media-User-Token'];
-
-        if (auth && auth.startsWith('Bearer ')) {
-          appleBearerToken = auth.replace('Bearer ', '').trim();
-        }
-        if (mut && mut.length > 20) {
-          appleMediaUserToken = mut.trim();
-        }
-
-        if (appleBearerToken && appleMediaUserToken && !resolved) {
-          console.log('[Apple Music Importer] Captured live Apple Music session tokens!');
-          setTimeout(() => finish(), 800);
-        }
-
-        callback({ requestHeaders: details.requestHeaders });
-      }
-    );
-
-    const win = new BrowserWindow({
-      width: 580,
-      height: 720,
-      center: true,
-      parent: parentWindow || undefined,
-      title: 'Conectar con Apple Music — Inicia sesión arriba a la derecha',
-      backgroundColor: '#1f1f1f',
-      webPreferences: {
-        partition: 'persist:apple_import',
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-    });
-
-    win.webContents.setUserAgent(CHROME_UA);
-    win.loadURL('https://music.apple.com/es/home');
-
-    win.on('closed', () => {
-      if (!resolved) {
-        resolved = true;
-        if (appleBearerToken && appleMediaUserToken) {
-          fetchAppleMusicLibrary().then((lib) => resolve({ ok: true, ...lib }));
-        } else {
-          resolve({ ok: false, error: 'Ventana cerrada antes de completar el inicio de sesión.' });
-        }
-      }
-    });
-  });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 }
 
 async function fetchAppleMusicLibrary() {
@@ -495,20 +569,31 @@ async function getApplePlaylistTracks(playlistId) {
 // 3. DIRECT URL / LINK PARSER (SPOTIFY & APPLE MUSIC PUBLIC LINKS)
 // ============================================================================
 
-/**
- * Parses any public Spotify or Apple Music Playlist/Album URL without requiring login
- */
 async function parseExternalMusicUrl(rawUrl) {
   const url = (rawUrl || '').trim();
   if (!url) return { ok: false, error: 'Ingresa un enlace válido.' };
 
-  // A. Spotify URL (open.spotify.com/playlist/... or album/...)
   if (url.includes('spotify.com')) {
     const match = url.match(/(playlist|album|track)\/([a-zA-Z0-9]+)/);
     if (!match) {
       return { ok: false, error: 'No se reconoció el ID de la playlist o álbum de Spotify.' };
     }
     const [, type, id] = match;
+
+    // If we have an active Spotify OAuth token and it's a playlist, use the official API!
+    if (type === 'playlist' && (spotifyBearerToken || loadSpotifyTokensFromDisk())) {
+      const tracks = await getSpotifyPlaylistTracks(id);
+      if (tracks && tracks.length > 0) {
+        return {
+          ok: true,
+          provider: 'spotify',
+          title: 'Playlist de Spotify',
+          thumbnail: tracks[0]?.thumbnail || '',
+          tracks,
+        };
+      }
+    }
+
     try {
       const embedUrl = `https://open.spotify.com/embed/${type}/${id}`;
       const { raw } = await httpsGet(embedUrl);
@@ -544,7 +629,6 @@ async function parseExternalMusicUrl(rawUrl) {
     }
   }
 
-  // B. Apple Music URL (music.apple.com/.../playlist/... or album/...)
   if (url.includes('music.apple.com')) {
     try {
       const { raw } = await httpsGet(url);
@@ -555,13 +639,11 @@ async function parseExternalMusicUrl(rawUrl) {
       }
 
       const tracks = [];
-      // Look for serialized-server-data or schema.org music tracks
       const serverDataMatch = raw.match(
         /<script type="application\/json" id="serialized-server-data">([\s\S]*?)<\/script>/
       );
       if (serverDataMatch) {
         const jsonStr = serverDataMatch[1];
-        // Match track objects containing title and artistName
         const regex = /"title"\s*:\s*"([^"]+)"[^{}]*?"artistName"\s*:\s*"([^"]+)"/g;
         let m;
         const seen = new Set();
