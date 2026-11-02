@@ -1,22 +1,6 @@
 import Foundation
 
 enum YouTubeEnhancerScripts {
-    /// Injected at document start so Google Login uses standard Phone Prompt / Password
-    /// instead of failing on macOS Bluetooth Passkey inside unsigned WebViews
-    static let disableBrokenBluetoothPasskeyJS = """
-    (function() {
-      try {
-        if (location.hostname.includes('accounts.google.com')) {
-          Object.defineProperty(window, 'PublicKeyCredential', { value: undefined, configurable: true });
-          if (navigator.credentials) {
-            navigator.credentials.get = () => Promise.reject(new Error('WebAuthn disabled'));
-            navigator.credentials.create = () => Promise.reject(new Error('WebAuthn disabled'));
-          }
-        }
-      } catch (e) {}
-    })();
-    """
-
     /// Injected into `ytmWebView` (`https://music.youtube.com`):
     /// - Preserves 100% default video & audio quality (removes any quality override)
     /// - Skips video/audio ads automatically & dismisses "Are you still listening?" dialogs

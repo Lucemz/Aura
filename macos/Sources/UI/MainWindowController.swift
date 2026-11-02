@@ -35,13 +35,6 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         ytmConfig.mediaTypesRequiringUserActionForPlayback = []
         ytmConfig.allowsAirPlayForMediaPlayback = true
 
-        let passkeyFixScript = WKUserScript(
-            source: YouTubeEnhancerScripts.disableBrokenBluetoothPasskeyJS,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        ytmConfig.userContentController.addUserScript(passkeyFixScript)
-
         let ytmScript = WKUserScript(
             source: YouTubeEnhancerScripts.youtubeMusicEnhancerJS,
             injectionTime: .atDocumentEnd,
