@@ -716,7 +716,18 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                               )}
                               <div className="min-w-0">
                                 <p className="text-xs font-bold text-white truncate">{pl.title}</p>
-                                <p className="text-[11px] text-neutral-400">
+                                <p className="text-[11px] text-neutral-400 truncate">
+                                  {pl.description ? (
+                                    <span
+                                      className={
+                                        pl.description === 'Creada por ti'
+                                          ? 'text-[#1DB954] font-medium'
+                                          : 'text-neutral-400'
+                                      }
+                                    >
+                                      {pl.description} •{' '}
+                                    </span>
+                                  ) : null}
                                   {pl.trackCount ? `${pl.trackCount} canciones` : 'Playlist'}
                                 </p>
                               </div>

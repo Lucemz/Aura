@@ -84,7 +84,7 @@ function httpsGet(url, headers = {}) {
       {
         headers: {
           'User-Agent': CHROME_UA,
-          Accept: 'application/json, text/plain, */*',
+          Accept: 'application/json',
           ...headers,
         },
       },
@@ -346,25 +346,22 @@ async function connectSpotifyAccount(parentWindow, forceReauth = false) {
 }
 
 /**
- * Fetches User Profile, Liked Songs, and Playlists using Spotify's first-party
- * Pathfinder GraphQL API + spclient (0 rate limits, 100% reliable)
+ * Fetches User Profile, ALL Liked Songs (100% paginated in parallel), and ALL Playlists
+ * (including user-created private & public playlists) using Spotify's first-party
+ * Pathfinder GraphQL API + spclient rootlist.
  */
 async function fetchSpotifyUserLibrary(token) {
   const activeToken = token || (await getValidSpotifyToken());
   if (!activeToken) return { profile: null, likedSongs: [], playlists: [], albums: [] };
 
   try {
-    // 1. Fetch Profile & Liked Songs (first 200 tracks across 2 pages of 100) in parallel
-    const [profRes, tracksPage1, tracksPage2] = await Promise.all([
+    // 1. Fetch Profile & First page of Liked Songs in parallel
+    const [profRes, firstTracksPage] = await Promise.all([
       querySpotifyPathfinder(activeToken, 'profileAttributes', HASH_PROFILE_ATTRIBUTES, {}).catch(
         () => null
       ),
       querySpotifyPathfinder(activeToken, 'fetchLibraryTracks', HASH_FETCH_LIBRARY_TRACKS, {
         offset: 0,
-        limit: 100,
-      }).catch(() => null),
-      querySpotifyPathfinder(activeToken, 'fetchLibraryTracks', HASH_FETCH_LIBRARY_TRACKS, {
-        offset: 100,
         limit: 100,
       }).catch(() => null),
     ]);
@@ -376,12 +373,45 @@ async function fetchSpotifyUserLibrary(token) {
       avatar: profData?.avatar?.sources?.[0]?.url || '',
     };
 
-    const page1Items = tracksPage1?.data?.data?.me?.library?.tracks?.items || [];
-    const page2Items = tracksPage2?.data?.data?.me?.library?.tracks?.items || [];
+    const firstPageItems = firstTracksPage?.data?.data?.me?.library?.tracks?.items || [];
     const totalLiked =
-      tracksPage1?.data?.data?.me?.library?.tracks?.totalCount || page1Items.length;
+      firstTracksPage?.data?.data?.me?.library?.tracks?.totalCount || firstPageItems.length;
 
-    const allTrackItems = [...page1Items, ...page2Items];
+    // Fetch ALL remaining pages of Liked Songs in parallel (100 tracks per page)
+    const remainingOffsets = [];
+    for (let offset = 100; offset < totalLiked; offset += 100) {
+      remainingOffsets.push(offset);
+    }
+
+    // Also fetch user's rootlist of playlists in parallel with the remaining song pages!
+    const [remainingPages, rootlistRes] = await Promise.all([
+      Promise.all(
+        remainingOffsets.map((offset) =>
+          querySpotifyPathfinder(activeToken, 'fetchLibraryTracks', HASH_FETCH_LIBRARY_TRACKS, {
+            offset,
+            limit: 100,
+          }).catch(() => null)
+        )
+      ),
+      username
+        ? httpsGet(
+            `https://spclient.wg.spotify.com/playlist/v2/user/${encodeURIComponent(
+              username
+            )}/rootlist?decorate=revision,length,attributes,timestamp,owner`,
+            {
+              Authorization: `Bearer ${activeToken}`,
+              Accept: 'application/json',
+            }
+          ).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    const allTrackItems = [...firstPageItems];
+    for (const page of remainingPages) {
+      const pageItems = page?.data?.data?.me?.library?.tracks?.items || [];
+      allTrackItems.push(...pageItems);
+    }
+
     const likedSongs = allTrackItems
       .map((item, idx) => {
         const tData = item?.track?.data;
@@ -403,65 +433,56 @@ async function fetchSpotifyUserLibrary(token) {
       })
       .filter(Boolean);
 
-    // 2. Fetch User's Playlists (both private & public) from spclient rootlist + enrich metadata via Pathfinder
+    // 2. Parse User's Playlists (created by user + followed) from spclient rootlist
     const playlists = [];
-    if (username) {
-      const rootlistRes = await httpsGet(
-        `https://spclient.wg.spotify.com/playlist/v2/user/${encodeURIComponent(
-          username
-        )}/rootlist?decorate=revision,length,attributes,timestamp,owner`,
-        {
-          Authorization: `Bearer ${activeToken}`,
-        }
-      ).catch(() => null);
+    const rawItems = rootlistRes?.data?.contents?.items || [];
+    const metaItems = rootlistRes?.data?.contents?.metaItems || [];
 
-      const rawItems = rootlistRes?.data?.contents?.items || [];
-      const playlistUris = rawItems
-        .map((it) => it.uri)
-        .filter((uri) => uri && uri.startsWith('spotify:playlist:'))
-        .slice(0, 25);
+    const userCreatedPlaylists = [];
+    const otherPlaylists = [];
 
-      const enriched = await Promise.all(
-        playlistUris.map(async (uri) => {
-          const plId = uri.split(':').pop();
-          try {
-            const plRes = await querySpotifyPathfinder(
-              activeToken,
-              'fetchPlaylist',
-              HASH_FETCH_PLAYLIST,
-              {
-                uri,
-                offset: 0,
-                limit: 1,
-                enableWatchFeedEntrypoint: false,
-              }
-            );
-            const plV2 = plRes?.data?.data?.playlistV2;
-            if (!plV2 || !plV2.name) return null;
-            return {
-              id: plId,
-              provider: 'spotify',
-              title: plV2.name,
-              description: plV2.description || '',
-              trackCount: plV2.content?.totalCount || 0,
-              thumbnail: plV2.images?.items?.[0]?.sources?.[0]?.url || '',
-            };
-          } catch (e) {
-            return null;
-          }
-        })
-      );
+    for (let i = 0; i < rawItems.length; i++) {
+      const uri = rawItems[i]?.uri || '';
+      if (!uri.startsWith('spotify:playlist:')) continue;
 
-      playlists.push(...enriched.filter(Boolean));
+      const plId = uri.split(':').pop();
+      const meta = metaItems[i] || {};
+      const attrs = meta.attributes || {};
+      const title = attrs.name;
+      if (!title) continue;
+
+      const picSizes = attrs.pictureSize || [];
+      const thumbUrl =
+        picSizes.find((p) => p.targetName === 'default')?.url ||
+        picSizes[0]?.url ||
+        '';
+
+      const isMine = meta.ownerUsername === username;
+      const plObj = {
+        id: plId,
+        provider: 'spotify',
+        title: title.trim(),
+        description: isMine ? 'Creada por ti' : 'Playlist guardada',
+        trackCount: typeof meta.length === 'number' ? meta.length : 0,
+        thumbnail: thumbUrl,
+      };
+
+      if (isMine) {
+        userCreatedPlaylists.push(plObj);
+      } else {
+        otherPlaylists.push(plObj);
+      }
     }
 
+    playlists.push(...userCreatedPlaylists, ...otherPlaylists);
+
     console.log(
-      `[Spotify Pathfinder] Loaded ${likedSongs.length} liked songs (of ${totalLiked} total) & ${playlists.length} playlists for ${profile.name}!`
+      `[Spotify Pathfinder] Loaded ${likedSongs.length} liked songs (of ${totalLiked} total) & ${playlists.length} playlists (${userCreatedPlaylists.length} created by user) for ${profile.name}!`
     );
 
     return {
       profile,
-      totalLiked,
+      totalLiked: likedSongs.length,
       likedSongs,
       playlists,
       albums: [],
@@ -473,7 +494,7 @@ async function fetchSpotifyUserLibrary(token) {
 }
 
 /**
- * Fetches all tracks inside a specific Spotify Playlist via Pathfinder GraphQL `fetchPlaylist`
+ * Fetches ALL tracks inside a specific Spotify Playlist via Pathfinder GraphQL `fetchPlaylist`
  */
 async function getSpotifyPlaylistTracks(playlistId) {
   const activeToken = await getValidSpotifyToken();
@@ -482,15 +503,43 @@ async function getSpotifyPlaylistTracks(playlistId) {
       const uri = playlistId.startsWith('spotify:playlist:')
         ? playlistId
         : `spotify:playlist:${playlistId}`;
-      const res = await querySpotifyPathfinder(activeToken, 'fetchPlaylist', HASH_FETCH_PLAYLIST, {
-        uri,
-        offset: 0,
-        limit: 100,
-        enableWatchFeedEntrypoint: false,
-      });
+      const firstRes = await querySpotifyPathfinder(
+        activeToken,
+        'fetchPlaylist',
+        HASH_FETCH_PLAYLIST,
+        {
+          uri,
+          offset: 0,
+          limit: 100,
+          enableWatchFeedEntrypoint: false,
+        }
+      );
 
-      const items = res?.data?.data?.playlistV2?.content?.items || [];
-      const tracks = items
+      const content = firstRes?.data?.data?.playlistV2?.content;
+      const totalCount = content?.totalCount || 0;
+      const allItems = [...(content?.items || [])];
+
+      if (totalCount > 100) {
+        const extraOffsets = [];
+        for (let off = 100; off < totalCount; off += 100) {
+          extraOffsets.push(off);
+        }
+        const extraPages = await Promise.all(
+          extraOffsets.map((offset) =>
+            querySpotifyPathfinder(activeToken, 'fetchPlaylist', HASH_FETCH_PLAYLIST, {
+              uri,
+              offset,
+              limit: 100,
+              enableWatchFeedEntrypoint: false,
+            }).catch(() => null)
+          )
+        );
+        for (const p of extraPages) {
+          allItems.push(...(p?.data?.data?.playlistV2?.content?.items || []));
+        }
+      }
+
+      const tracks = allItems
         .map((it) => {
           const tData = it?.itemV2?.data;
           if (!tData || !tData.name) return null;
