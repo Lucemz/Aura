@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Music,
   Heart,
   ListMusic,
-  Disc,
   Link2,
   CheckCircle2,
   Loader2,
@@ -19,7 +18,6 @@ import {
 import {
   ImportedTrack,
   ImportedPlaylist,
-  ImportedAlbum,
   ProviderLibraryResult,
   TransferLogItem,
 } from '../types';
@@ -48,7 +46,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   onCreatePlaylistInWebview,
 }) => {
   const [sourceTab, setSourceTab] = useState<'spotify' | 'url'>('spotify');
-  const [categoryTab, setCategoryTab] = useState<'likes' | 'playlists' | 'albums'>('likes');
+  const [categoryTab, setCategoryTab] = useState<'likes' | 'playlists'>('likes');
 
   // Spotify Library State
   const [spotifyData, setSpotifyData] = useState<ProviderLibraryResult | null>(null);
@@ -74,13 +72,37 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   const [transferDone, setTransferDone] = useState(false);
   const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
 
+  // Automatically load cached Spotify library when modal opens if user already authorized before
+  useEffect(() => {
+    if (!isOpen || spotifyData) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setIsConnecting(true);
+        const cached = await window.auraAPI?.getCachedSpotify();
+        if (!cancelled && cached && cached.ok) {
+          setSpotifyData(cached);
+          const allIndices = new Set((cached.likedSongs || []).map((_, idx) => idx));
+          setSelectedTrackIndices(allIndices);
+        }
+      } catch {
+        // Ignore if not yet connected
+      } finally {
+        if (!cancelled) setIsConnecting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const handleConnectSpotify = async () => {
+  const handleConnectSpotify = async (forceReauth = false) => {
     setStatusError(null);
     setIsConnecting(true);
     try {
-      const res = await window.auraAPI?.connectSpotify();
+      const res = await window.auraAPI?.connectSpotify(forceReauth);
       if (res && res.ok) {
         setSpotifyData(res);
         const allIndices = new Set((res.likedSongs || []).map((_, idx) => idx));
@@ -267,24 +289,6 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     } catch (err: any) {
       setIsConnecting(false);
       setStatusError(err.message || 'Error al obtener las canciones de la playlist.');
-    }
-  };
-
-  const handleTransferSelectedAlbum = async (
-    al: ImportedAlbum,
-    destination: 'likes' | 'playlist'
-  ) => {
-    if (al.tracks && al.tracks.length > 0) {
-      await startTransfer(al.tracks, destination, `${al.artist} - ${al.title}`);
-      return;
-    }
-    const parsed = await window.auraAPI?.parseExternalMusicUrl(
-      `https://open.spotify.com/album/${al.id}`
-    );
-    if (parsed?.ok && parsed.tracks?.length) {
-      await startTransfer(parsed.tracks, destination, `${al.artist} - ${al.title}`);
-    } else {
-      setStatusError('No se pudieron leer las pistas de este álbum.');
     }
   };
 
@@ -519,14 +523,14 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                     </p>
 
                     <button
-                      onClick={handleConnectSpotify}
+                      onClick={() => handleConnectSpotify(false)}
                       disabled={isConnecting}
                       className="px-6 py-3 rounded-xl font-bold text-sm bg-[#1DB954] hover:bg-[#1ed760] text-black flex items-center gap-2.5 shadow-lg cursor-pointer transition disabled:opacity-50"
                     >
                       {isConnecting ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Esperando autorización en tu navegador...</span>
+                          <span>Cargando tu biblioteca de Spotify...</span>
                         </>
                       ) : (
                         <>
@@ -551,7 +555,12 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                         >
                           <Heart className="w-3.5 h-3.5" />
                           <span>
-                            Canciones que te gustan ({spotifyData.likedSongs.length})
+                            Canciones que te gustan ({spotifyData.likedSongs.length}
+                            {spotifyData.totalLiked &&
+                            spotifyData.totalLiked > spotifyData.likedSongs.length
+                              ? ` de ${spotifyData.totalLiked}`
+                              : ''}
+                            )
                           </span>
                         </button>
 
@@ -566,18 +575,6 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                           <ListMusic className="w-3.5 h-3.5" />
                           <span>Playlists ({spotifyData.playlists.length})</span>
                         </button>
-
-                        <button
-                          onClick={() => setCategoryTab('albums')}
-                          className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                            categoryTab === 'albums'
-                              ? 'bg-[#1DB954] text-black'
-                              : 'bg-white/5 text-neutral-300 hover:bg-white/10'
-                          }`}
-                        >
-                          <Disc className="w-3.5 h-3.5" />
-                          <span>Álbumes ({spotifyData.albums.length})</span>
-                        </button>
                       </div>
 
                       <div className="flex items-center gap-3">
@@ -587,11 +584,19 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                           </span>
                         )}
                         <button
-                          onClick={handleConnectSpotify}
-                          className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                          onClick={() => handleConnectSpotify(false)}
+                          disabled={isConnecting}
+                          className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 cursor-pointer disabled:opacity-50"
                         >
-                          <RefreshCw className="w-3.5 h-3.5" />
+                          <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} />
                           <span>Actualizar</span>
+                        </button>
+                        <button
+                          onClick={() => handleConnectSpotify(true)}
+                          disabled={isConnecting}
+                          className="text-xs text-neutral-500 hover:text-neutral-300 cursor-pointer disabled:opacity-50"
+                        >
+                          Cambiar cuenta
                         </button>
                       </div>
                     </div>
@@ -712,7 +717,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                               <div className="min-w-0">
                                 <p className="text-xs font-bold text-white truncate">{pl.title}</p>
                                 <p className="text-[11px] text-neutral-400">
-                                  {pl.trackCount} canciones
+                                  {pl.trackCount ? `${pl.trackCount} canciones` : 'Playlist'}
                                 </p>
                               </div>
                             </div>
@@ -731,51 +736,6 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                                 className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
                               >
                                 Enviar a mis Likes
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* CATEGORY 3: ALBUMS */}
-                    {categoryTab === 'albums' && (
-                      <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3 p-1">
-                        {spotifyData.albums.map((al) => (
-                          <div
-                            key={al.id}
-                            className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition"
-                          >
-                            <div className="flex items-center gap-3 min-w-0 pr-2">
-                              {al.thumbnail ? (
-                                <img
-                                  src={al.thumbnail}
-                                  alt={al.title}
-                                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-                                />
-                              ) : (
-                                <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
-                                  <Disc className="w-6 h-6 text-neutral-400" />
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <p className="text-xs font-bold text-white truncate">{al.title}</p>
-                                <p className="text-[11px] text-neutral-400 truncate">{al.artist}</p>
-                              </div>
-                            </div>
-
-                            <div className="flex flex-col gap-1.5 flex-shrink-0">
-                              <button
-                                onClick={() => handleTransferSelectedAlbum(al, 'playlist')}
-                                className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
-                              >
-                                Guardar en YTM
-                              </button>
-                              <button
-                                onClick={() => handleTransferSelectedAlbum(al, 'likes')}
-                                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
-                              >
-                                Likes a sus temas
                               </button>
                             </div>
                           </div>

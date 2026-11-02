@@ -62,7 +62,8 @@ declare global {
       logout: () => Promise<boolean>;
       onAuthSuccess: (callback: () => void) => () => void;
 
-      connectSpotify: () => Promise<ProviderLibraryResult>;
+      connectSpotify: (forceReauth?: boolean) => Promise<ProviderLibraryResult>;
+      getCachedSpotify: () => Promise<ProviderLibraryResult>;
       getSpotifyPlaylistTracks: (playlistId: string) => Promise<ImportedTrack[]>;
       connectAppleMusic: () => Promise<ProviderLibraryResult>;
       getApplePlaylistTracks: (playlistId: string) => Promise<ImportedTrack[]>;

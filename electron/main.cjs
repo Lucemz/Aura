@@ -13,9 +13,8 @@ const {
 } = require('./youtubeMusic.cjs');
 const {
   connectSpotifyAccount,
+  fetchSpotifyUserLibrary,
   getSpotifyPlaylistTracks,
-  connectAppleMusicAccount,
-  getApplePlaylistTracks,
   parseExternalMusicUrl,
 } = require('./musicImporter.cjs');
 const {
@@ -235,20 +234,20 @@ ipcMain.handle('auth:logout', async () => {
 });
 
 // Music Importer IPCs
-ipcMain.handle('importer:connect-spotify', async () => {
-  return await connectSpotifyAccount(mainWindow);
+ipcMain.handle('importer:connect-spotify', async (_, forceReauth = false) => {
+  return await connectSpotifyAccount(mainWindow, forceReauth);
+});
+
+ipcMain.handle('importer:get-cached-spotify', async () => {
+  const lib = await fetchSpotifyUserLibrary();
+  if (lib && (lib.likedSongs.length > 0 || lib.playlists.length > 0)) {
+    return { ok: true, ...lib };
+  }
+  return { ok: false, likedSongs: [], playlists: [], albums: [] };
 });
 
 ipcMain.handle('importer:get-spotify-playlist-tracks', async (_, playlistId) => {
   return await getSpotifyPlaylistTracks(playlistId);
-});
-
-ipcMain.handle('importer:connect-apple', async () => {
-  return await connectAppleMusicAccount(mainWindow);
-});
-
-ipcMain.handle('importer:get-apple-playlist-tracks', async (_, playlistId) => {
-  return await getApplePlaylistTracks(playlistId);
 });
 
 ipcMain.handle('importer:parse-url', async (_, url) => {
