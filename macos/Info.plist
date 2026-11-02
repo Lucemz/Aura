@@ -28,6 +28,8 @@
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Aura utiliza Bluetooth para conectar tus AirPods con Audio Espacial y llaves de seguridad.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

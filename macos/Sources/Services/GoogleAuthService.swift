@@ -31,7 +31,10 @@ final class GoogleAuthService {
             if (c["secure"] as? Bool) == true {
                 props[.secure] = "TRUE"
             }
-            if let expires = c["expires"] as? Double, expires > 0 {
+            if (c["httpOnly"] as? Bool) == true {
+                props[HTTPCookiePropertyKey("HttpOnly")] = "TRUE"
+            }
+            if let expires = (c["expires"] as? NSNumber)?.doubleValue, expires > 0 {
                 props[.expires] = Date(timeIntervalSince1970: expires)
             }
             if let cookie = HTTPCookie(properties: props) {
@@ -89,6 +92,7 @@ final class GoogleAuthService {
             "--remote-debugging-port=\(debugPort)",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-features=WebAuthentication",
             "--window-size=560,740",
             "--app=\(loginUrl)",
         ]
