@@ -22,6 +22,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         mainWindow.title = "Aura"
         mainWindow.titleVisibility = .hidden
         mainWindow.titlebarAppearsTransparent = true
+        mainWindow.isReleasedWhenClosed = false
         mainWindow.backgroundColor = NSColor(calibratedRed: 0.01, green: 0.01, blue: 0.01, alpha: 1.0)
         mainWindow.minSize = NSSize(width: 420, height: 500)
         mainWindow.center()
@@ -184,10 +185,15 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        if webView == ytmWebView, let urlStr = navigationAction.request.url?.absoluteString {
-            if urlStr.contains("accounts.google.com/v3/signin")
-                || urlStr.contains("accounts.google.com/ServiceLogin")
-                || urlStr.contains("youtube.com/signin") {
+        if webView == ytmWebView,
+           navigationAction.targetFrame?.isMainFrame == true,
+           let urlStr = navigationAction.request.url?.absoluteString {
+            let isExplicitLogin =
+                (urlStr.contains("accounts.google.com/v3/signin")
+                    || urlStr.contains("accounts.google.com/ServiceLogin"))
+                && !urlStr.contains("passive=true")
+                && !urlStr.contains("RotateCookies")
+            if isExplicitLogin {
                 decisionHandler(.cancel)
                 Task { @MainActor in
                     let ok = await GoogleAuthService.shared.authenticateViaExternalChrome()

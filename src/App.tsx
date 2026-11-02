@@ -38,9 +38,7 @@ export const App: React.FC = () => {
     if (window.auraAPI?.onAuthSuccess) {
       return window.auraAPI.onAuthSuccess(() => {
         checkAuthStatus();
-        if (window.auraAPI?.webviewLoadURL) {
-          window.auraAPI.webviewLoadURL('https://music.youtube.com/');
-        } else if (webviewRef.current) {
+        if (!window.auraAPI?.isSafariEngine && webviewRef.current) {
           try {
             webviewRef.current.loadURL('https://music.youtube.com/');
           } catch {
