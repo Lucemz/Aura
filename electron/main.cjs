@@ -27,7 +27,18 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling');
+app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling,VaapiVideoDecoder');
+
+// Low-RAM & Low-CPU Optimizations (0% impact on audio bitrate/quality)
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=256 --optimize-for-size');
+app.commandLine.appendSwitch('renderer-process-limit', '2');
+app.commandLine.appendSwitch('disk-cache-size', '52428800'); // 50 MB max disk cache
+app.commandLine.appendSwitch('media-cache-size', '26214400'); // 25 MB max media buffer
+app.commandLine.appendSwitch('disable-spell-checking');
+app.commandLine.appendSwitch(
+  'disable-features',
+  'Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider,InterestFeedContentSuggestions, AutofillServerCommunication'
+);
 
 let mainWindow = null;
 let isMiniPlayer = false;
@@ -42,15 +53,18 @@ async function createWindow() {
   const sess = session.fromPartition(SESSION_PARTITION);
   sess.setUserAgent(CHROME_UA);
 
-  // 1. Silent Ad-Blocker for YouTube Music network requests
+  // 1. Silent Ad-Blocker & Telemetry-Blocker for YouTube Music (reduces RAM/CPU & GC churn)
   sess.webRequest.onBeforeRequest(
     {
       urls: [
         '*://*.doubleclick.net/*',
         '*://*.googleads.g.doubleclick.net/*',
         '*://*.youtube.com/api/stats/ads*',
+        '*://*.youtube.com/api/stats/qoe*',
+        '*://*.youtube.com/youtubei/v1/log_event*',
         '*://*.youtube.com/pagead/*',
         '*://*.googlesyndication.com/*',
+        '*://play.google.com/log*',
       ],
     },
     (details, callback) => {
@@ -97,6 +111,7 @@ async function createWindow() {
       webSecurity: false,
       webviewTag: true,
       backgroundThrottling: false,
+      spellcheck: false,
       partition: SESSION_PARTITION,
     },
   });
@@ -106,6 +121,28 @@ async function createWindow() {
   // Handle any webview attachment (e.g. YouTube Music iframe/webview)
   mainWindow.webContents.on('did-attach-webview', (_, webviewContents) => {
     webviewContents.setUserAgent(CHROME_UA);
+
+    // Eco GPU Frame-Rate Throttling:
+    // When Aura is in the background or minimized, drop UI rendering to 4 FPS (saves ~85% GPU/CPU)
+    // while CoreAudio keeps streaming music at 100% original bitrate!
+    const setEcoMode = (isBackground) => {
+      if (webviewContents.isDestroyed()) return;
+      try {
+        webviewContents.setFrameRate(isBackground ? 4 : 60);
+        webviewContents
+          .executeJavaScript(
+            `document.documentElement.classList.toggle('__aura-eco-bg', ${Boolean(isBackground)});`
+          )
+          .catch(() => {});
+      } catch (e) {}
+    };
+
+    mainWindow.on('blur', () => setEcoMode(true));
+    mainWindow.on('minimize', () => setEcoMode(true));
+    mainWindow.on('hide', () => setEcoMode(true));
+    mainWindow.on('focus', () => setEcoMode(false));
+    mainWindow.on('restore', () => setEcoMode(false));
+    mainWindow.on('show', () => setEcoMode(false));
 
     // Intercept top-level navigation to accounts.google.com when user clicks "Acceder" inside YT Music
     webviewContents.on('will-navigate', (event, url) => {

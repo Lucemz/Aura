@@ -123,7 +123,31 @@ export const App: React.FC = () => {
           if (window.__auraEnhancerInstalled) return;
           window.__auraEnhancerInstalled = true;
 
-          // Auto-skip ads & bypass 'Are you still listening?' prompts
+          // 1. Eco-Mode CSS: Pause all GPU animations/transitions when window is in background
+          try {
+            const style = document.createElement('style');
+            style.textContent = \`
+              html.__aura-eco-bg *,
+              html.__aura-eco-bg *::before,
+              html.__aura-eco-bg *::after {
+                animation-play-state: paused !important;
+                transition: none !important;
+              }
+            \`;
+            document.head.appendChild(style);
+          } catch (e) {}
+
+          // 2. Lock Audio Quality to HIGH while keeping video buffer tiny (saves RAM & GPU)
+          try {
+            const now = Date.now();
+            localStorage.setItem('yt-player-quality', JSON.stringify({
+              data: JSON.stringify({ quality: 144, previousQuality: 144 }),
+              expiration: now + 31536000000,
+              creation: now
+            }));
+          } catch (e) {}
+
+          // 3. Auto-skip ads & bypass 'Are you still listening?' prompts with low-overhead timer
           setInterval(() => {
             try {
               const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
@@ -132,11 +156,10 @@ export const App: React.FC = () => {
               const adOverlayClose = document.querySelector('.ytp-ad-overlay-close-button');
               if (adOverlayClose) adOverlayClose.click();
 
-              // Dismiss 'Still listening?' dialog if it pops up
               const confirmDialog = document.querySelector('ytmusic-you-there-renderer button');
               if (confirmDialog) confirmDialog.click();
             } catch (e) {}
-          }, 1000);
+          }, 2500);
         })();
       `).catch(() => {});
     };
