@@ -1,39 +1,104 @@
 const https = require('https');
+const crypto = require('crypto');
+const yts = require('yt-search');
 
-function fetchInnerTube(browseId, params = null, cookieHeader = '') {
+const CHROME_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/**
+ * Helper to build Cookie header string and map from Electron session
+ */
+async function getCookiesDataFromSession(sess) {
+  try {
+    if (!sess) return { cookieHeader: '', cookieMap: {} };
+    const cookiesYt = await sess.cookies.get({ url: 'https://music.youtube.com' });
+    const cookiesGoogle = await sess.cookies.get({ domain: '.youtube.com' });
+    const allCookies = [...cookiesGoogle, ...cookiesYt];
+
+    const cookieMap = {};
+    for (const c of allCookies) {
+      cookieMap[c.name] = c.value;
+    }
+    const cookieHeader = Object.entries(cookieMap)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('; ');
+
+    return { cookieHeader, cookieMap };
+  } catch (e) {
+    return { cookieHeader: '', cookieMap: {} };
+  }
+}
+
+async function getCookieHeaderFromSession(sess) {
+  const { cookieHeader } = await getCookiesDataFromSession(sess);
+  return cookieHeader;
+}
+
+/**
+ * Generates SAPISIDHASH Authorization header required by YouTube Music for authenticated write actions
+ * (Liking songs, creating playlists, adding tracks to playlists)
+ */
+function buildSapisidHashHeader(cookieMap) {
+  const sapisid =
+    cookieMap['SAPISID'] ||
+    cookieMap['__Secure-3PAPISID'] ||
+    cookieMap['__Secure-1PAPISID'] ||
+    '';
+  if (!sapisid) return null;
+
+  const origin = 'https://music.youtube.com';
+  const timestamp = Math.floor(Date.now() / 1000);
+  const input = `${timestamp} ${sapisid} ${origin}`;
+  const hash = crypto.createHash('sha1').update(input).digest('hex');
+  return `SAPISIDHASH ${timestamp}_${hash} SAPISID1PHASH ${timestamp}_${hash} SAPISID3PHASH ${timestamp}_${hash}`;
+}
+
+/**
+ * Generic authenticated InnerTube POST request against music.youtube.com
+ */
+async function callYouTubeMusicApi(sess, endpointPath, payload) {
+  const { cookieHeader, cookieMap } = await getCookiesDataFromSession(sess);
+  const authHeader = buildSapisidHashHeader(cookieMap);
+
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify({
       context: {
         client: {
           clientName: 'WEB_REMIX',
           clientVersion: '1.20241020.01.00',
-          hl: 'es',
+          hl: 'es-419',
           gl: 'PE',
         },
       },
-      browseId,
-      ...(params ? { params } : {}),
+      ...payload,
     });
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': CHROME_UA,
+      Origin: 'https://music.youtube.com',
+      Referer: 'https://music.youtube.com/',
+      'X-Origin': 'https://music.youtube.com',
+      'X-Goog-AuthUser': '0',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    };
+
     const req = https.request(
-      'https://music.youtube.com/youtubei/v1/browse?alt=json',
+      `https://music.youtube.com/youtubei/v1/${endpointPath}?alt=json`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-        },
+        headers,
       },
       (res) => {
         let body = '';
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
           try {
-            resolve(JSON.parse(body));
+            const parsed = JSON.parse(body);
+            resolve({ statusCode: res.statusCode, data: parsed });
           } catch (e) {
-            reject(e);
+            resolve({ statusCode: res.statusCode, data: null, raw: body });
           }
         });
       }
@@ -46,367 +111,145 @@ function fetchInnerTube(browseId, params = null, cookieHeader = '') {
 }
 
 /**
- * Parses the YouTube Music Explore page (Top songs chart, New Releases, Trending, Moods & Genres)
+ * Searches YouTube Music specifically for an official Song (ATV/OMV) matching Artist + Title
  */
-async function getExploreData(cookieHeader = '') {
+async function searchYouTubeMusicTrack(sess, title, artist) {
+  const query = `${artist} ${title}`.trim();
   try {
-    const [exploreData, chartData] = await Promise.all([
-      fetchInnerTube('FEmusic_explore', null, cookieHeader).catch(() => null),
-      fetchInnerTube('VLPL4fGSI1pDJn61j743B9r2LNeLCUUZsRMV', null, cookieHeader).catch(() => null),
-    ]);
+    // 1. Try YouTube Music's native search with "Songs" filter (EgWKAQIIAWoKEAMQBBAJEAoQBQ==)
+    const { data } = await callYouTubeMusicApi(sess, 'search', {
+      query,
+      params: 'EgWKAQIIAWoKEAMQBBAJEAoQBQ%3D%3D',
+    });
 
-    const result = {
-      topSongs: [],
-      newReleases: [],
-      trending: [],
-      moodsAndGenres: [],
-    };
+    const tabs = data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
+    const contents = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
 
-    // 1. Parse Top Songs Ranking (Peru / Regional Top Songs Chart from YouTube Music)
-    if (chartData) {
-      const sec =
-        chartData.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer
-          ?.contents?.[0];
-      const chartItems = sec?.musicPlaylistShelfRenderer?.contents || [];
-
-      chartItems.slice(0, 30).forEach((it, idx) => {
-        const item = it.musicResponsiveListItemRenderer;
-        if (!item) return;
-
-        const songTitle =
-          item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const artistRuns =
-          item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
-        const artist = artistRuns.map((r) => r.text).join('');
-        const thumb =
-          item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
-        const videoId =
-          item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
-            ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
-          item.navigationEndpoint?.watchEndpoint?.videoId;
-
-        if (songTitle && videoId) {
-          result.topSongs.push({
-            rank: idx + 1,
-            title: songTitle,
-            artist: artist || 'Artista',
-            videoId,
-            thumbnail: thumb || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-          });
-        }
-      });
-    }
-
-    // 2. Parse Explore Sections (New Releases, Trending, Moods & Genres)
-    if (exploreData) {
-      const tabs = exploreData.contents?.singleColumnBrowseResultsRenderer?.tabs || [];
-      const secList = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-
-      for (const sec of secList) {
-        const carousel = sec.musicCarouselShelfRenderer || sec.musicShelfRenderer || {};
-        const title =
-          carousel.header?.musicCarouselShelfBasicHeaderRenderer?.title?.runs?.[0]?.text || '';
-        const items = carousel.contents || [];
-        const titleLower = title.toLowerCase();
-
-        // New Releases (Albums & Singles - Match exact user screenshot)
-        if (
-          titleLower.includes('lanzamientos') ||
-          titleLower.includes('nuevos') ||
-          titleLower.includes('álbumes')
-        ) {
-          for (const it of items) {
-            const item = it.musicTwoRowItemRenderer;
-            if (!item) continue;
-            const albumTitle = item.title?.runs?.[0]?.text;
-            const subtitleRuns = item.subtitle?.runs || [];
-            const artist = subtitleRuns.map((r) => r.text).join('');
-            const thumb =
-              item.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]
-                ?.url;
-            const browseId = item.navigationEndpoint?.browseEndpoint?.browseId;
-            const videoId = item.navigationEndpoint?.watchEndpoint?.videoId;
-
-            if (albumTitle) {
-              result.newReleases.push({
-                title: albumTitle,
-                artist: artist || 'Nuevo Lanzamiento',
-                thumbnail: thumb,
-                browseId,
-                videoId,
-              });
-            }
-          }
-        }
-
-        // Trending / Videos Musicales Nuevos
-        else if (
-          titleLower.includes('tendencias') ||
-          titleLower.includes('trending') ||
-          titleLower.includes('videos')
-        ) {
-          for (const it of items) {
-            const item = it.musicResponsiveListItemRenderer || it.musicTwoRowItemRenderer;
-            if (!item) continue;
-
-            const songTitle =
-              item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]
-                ?.text || item.title?.runs?.[0]?.text;
-            const artist =
-              item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]
-                ?.text || item.subtitle?.runs?.[0]?.text;
-            const thumb =
-              item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url ||
-              item.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]
-                ?.url;
-            const videoId =
-              item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
-                ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
-              item.navigationEndpoint?.watchEndpoint?.videoId;
-
-            if (songTitle && videoId) {
-              result.trending.push({
-                title: songTitle,
-                artist: artist || 'Artista Destacado',
-                videoId,
-                thumbnail: thumb || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-              });
-            }
-          }
-        }
-
-        // Moods & Genres categories
-        else if (
-          titleLower.includes('ánimo') ||
-          titleLower.includes('géneros') ||
-          titleLower.includes('moods')
-        ) {
-          for (const it of items) {
-            const btn = it.musicNavigationButtonRenderer;
-            if (!btn) continue;
-            const moodTitle = btn.buttonText?.runs?.[0]?.text;
-            const browseId = btn.clickCommand?.browseEndpoint?.browseId;
-            const params = btn.clickCommand?.browseEndpoint?.params;
-
-            if (moodTitle) {
-              result.moodsAndGenres.push({
-                title: moodTitle,
-                browseId,
-                params,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    return result;
-  } catch (error) {
-    console.error('[Aura YTM] Error fetching explore data:', error);
-    return { topSongs: [], trending: [], newReleases: [], moodsAndGenres: [] };
-  }
-}
-
-/**
- * Fetches tracks from a specific category (e.g. Moods like Concentración, Fiesta) or Album
- */
-async function getCategoryTracks(browseId, params = null) {
-  try {
-    const data = await fetchInnerTube(browseId, params);
-
-    // If it is an album (twoColumnBrowseResultsRenderer)
-    const albumSec =
-      data.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer
-        ?.contents || [];
-    if (albumSec.length > 0) {
-      const shelf = albumSec[0]?.musicShelfRenderer?.contents || [];
-      const tracks = [];
-      for (const it of shelf) {
+    for (const sec of contents) {
+      const shelf = sec.musicShelfRenderer;
+      if (!shelf || !shelf.contents) continue;
+      for (const it of shelf.contents) {
         const item = it.musicResponsiveListItemRenderer;
         if (!item) continue;
-        const title =
-          item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const artist =
-          item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
+
         const videoId =
           item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
             ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
+          item.playlistItemData?.videoId ||
           item.navigationEndpoint?.watchEndpoint?.videoId;
-        const thumb =
-          item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
 
-        if (title && videoId) {
-          tracks.push({
-            title,
-            artist: artist || 'Artista',
+        const matchedTitle =
+          item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text ||
+          title;
+        const matchedArtist =
+          item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs
+            ?.map((r) => r.text)
+            .join('') || artist;
+        const thumb =
+          item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url || '';
+
+        if (videoId) {
+          return {
             videoId,
+            title: matchedTitle,
+            artist: matchedArtist,
             thumbnail: thumb || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-          });
-        }
-      }
-      if (tracks.length > 0) return tracks;
-    }
-
-    // If it is a mood/genre category with playlists
-    const tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs || [];
-    const secList = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-    const items = [];
-
-    for (const sec of secList) {
-      const carousel = sec.musicCarouselShelfRenderer;
-      if (!carousel) continue;
-      const list = carousel.contents || [];
-      for (const it of list) {
-        const sample = it.musicTwoRowItemRenderer;
-        if (!sample) continue;
-        const title = sample.title?.runs?.[0]?.text;
-        const subtitle = sample.subtitle?.runs?.[0]?.text;
-        const bId = sample.navigationEndpoint?.browseEndpoint?.browseId;
-        const vId = sample.navigationEndpoint?.watchEndpoint?.videoId;
-        const thumb =
-          sample.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]
-            ?.url;
-
-        if (title) {
-          items.push({
-            title,
-            artist: subtitle || '',
-            browseId: bId,
-            videoId: vId,
-            thumbnail: thumb,
-          });
+          };
         }
       }
     }
-
-    return items;
-  } catch (err) {
-    console.error('[Aura YTM] Error fetching category/album:', err);
-    return [];
-  }
-}
-
-/**
- * Helper to build Cookie header string from Electron session
- */
-async function getCookieHeaderFromSession(sess) {
-  try {
-    if (!sess) return '';
-    const cookies = await sess.cookies.get({ url: 'https://music.youtube.com' });
-    if (!cookies || cookies.length === 0) return '';
-    return cookies.map((c) => `${c.name}=${c.value}`).join('; ');
   } catch (e) {
-    return '';
+    console.warn('[YTM Search] InnerTube song search fallback:', e.message);
+  }
+
+  // 2. Fallback to yt-search if InnerTube didn't return a song
+  try {
+    const r = await yts(`${query} official audio`);
+    if (r && r.videos && r.videos.length > 0) {
+      const top = r.videos.find((v) => v.seconds >= 60 && v.seconds <= 600) || r.videos[0];
+      return {
+        videoId: top.videoId,
+        title: top.title,
+        artist: top.author?.name || artist,
+        thumbnail: top.thumbnail || `https://img.youtube.com/vi/${top.videoId}/hqdefault.jpg`,
+      };
+    }
+  } catch (err) {
+    console.error('[YTM Search] yt-search fallback failed:', err.message);
+  }
+
+  return null;
+}
+
+/**
+ * Likes a song directly on the user's REAL YouTube Music account (adds it to 'Música que me gusta' / LM)
+ */
+async function likeSongOnYouTubeMusic(sess, videoId) {
+  try {
+    const res = await callYouTubeMusicApi(sess, 'like/like', {
+      target: {
+        videoId,
+      },
+    });
+    const ok = res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error;
+    if (!ok) {
+      console.warn('[YTM Like] Failed response:', res.statusCode, JSON.stringify(res.data?.error || {}));
+    }
+    return { ok, statusCode: res.statusCode, error: res.data?.error?.message };
+  } catch (err) {
+    console.error('[YTM Like] Error liking videoId:', videoId, err);
+    return { ok: false, error: err.message };
   }
 }
 
 /**
- * Fetches User Liked Music from YouTube Music session cookies (playlist VLLM)
+ * Creates a REAL Playlist in the user's YouTube Music account
  */
-async function getUserLikedMusic(sess) {
+async function createPlaylistOnYouTubeMusic(sess, title, description = '', videoIds = []) {
   try {
-    const cookieHeader = await getCookieHeaderFromSession(sess);
-    if (!cookieHeader) return [];
-
-    console.log('[Aura YTM] Querying user liked tracks with Google session cookies...');
-    const data = await fetchInnerTube('VLLM', null, cookieHeader);
-
-    const tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs || [];
-    const secList = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-    const tracks = [];
-
-    for (const sec of secList) {
-      const shelf = sec.musicShelfRenderer || sec.musicPlaylistShelfRenderer;
-      if (!shelf) continue;
-      for (const it of shelf.contents || []) {
-        const item = it.musicResponsiveListItemRenderer;
-        if (!item) continue;
-        const title =
-          item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const artist =
-          item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const videoId =
-          item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
-            ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
-          item.navigationEndpoint?.watchEndpoint?.videoId;
-        const thumb =
-          item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
-
-        if (title && videoId) {
-          tracks.push({
-            id: `yt-liked-${videoId}`,
-            title,
-            artist: artist || 'Artista',
-            videoId,
-            thumbnail: thumb || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-            duration: 210,
-            durationFormatted: '3:30',
-            isLiked: true,
-          });
-        }
-      }
+    const payload = {
+      title: title || 'Playlist Importada',
+      description: description || 'Importada con Aura Music desde Spotify / Apple Music',
+      privacyStatus: 'PRIVATE',
+    };
+    if (videoIds && videoIds.length > 0) {
+      payload.videoIds = videoIds;
     }
 
-    console.log(`[Aura YTM] Retrieved ${tracks.length} liked tracks from YouTube Music!`);
-    return tracks;
-  } catch (error) {
-    console.warn('[Aura YTM] Failed to fetch user liked tracks:', error);
-    return [];
+    const res = await callYouTubeMusicApi(sess, 'playlist/create', payload);
+    const playlistId = res.data?.playlistId;
+    if (playlistId) {
+      return { ok: true, playlistId };
+    }
+    return {
+      ok: false,
+      error: res.data?.error?.message || 'No se pudo crear la playlist en YouTube Music',
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 }
 
 /**
- * Fetches User Watch Later from YouTube Music session cookies (playlist VLWL)
+ * Adds one or more videoIds to an existing YouTube Music Playlist
  */
-async function getUserWatchLater(sess) {
+async function addVideosToYouTubePlaylist(sess, playlistId, videoIds = []) {
+  if (!playlistId || !videoIds.length) return { ok: false };
   try {
-    const cookieHeader = await getCookieHeaderFromSession(sess);
-    if (!cookieHeader) return [];
+    const actions = videoIds.map((id) => ({
+      action: 'ACTION_ADD_VIDEO',
+      addedVideoId: id,
+      dedupeOption: 'DEDUPE_OPTION_SKIP',
+    }));
 
-    console.log('[Aura YTM] Querying user watch later tracks with Google session cookies...');
-    const data = await fetchInnerTube('VLWL', null, cookieHeader);
-
-    const tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs || [];
-    const secList = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-    const tracks = [];
-
-    for (const sec of secList) {
-      const shelf = sec.musicShelfRenderer || sec.musicPlaylistShelfRenderer;
-      if (!shelf) continue;
-      for (const it of shelf.contents || []) {
-        const item = it.musicResponsiveListItemRenderer;
-        if (!item) continue;
-        const title =
-          item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const artist =
-          item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-        const videoId =
-          item.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
-            ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
-          item.navigationEndpoint?.watchEndpoint?.videoId;
-        const thumb =
-          item.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url;
-
-        if (title && videoId) {
-          tracks.push({
-            id: `yt-wl-${videoId}`,
-            title,
-            artist: artist || 'Artista',
-            videoId,
-            thumbnail: thumb || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-            duration: 210,
-            durationFormatted: '3:30',
-            isSavedWatchLater: true,
-          });
-        }
-      }
-    }
-
-    console.log(`[Aura YTM] Retrieved ${tracks.length} watch later tracks from YouTube!`);
-    return tracks;
-  } catch (error) {
-    console.warn('[Aura YTM] Failed to fetch user watch later tracks:', error);
-    return [];
+    const res = await callYouTubeMusicApi(sess, 'browse/edit_playlist', {
+      playlistId,
+      actions,
+    });
+    const ok = res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error;
+    return { ok, error: res.data?.error?.message };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 }
 
@@ -415,70 +258,35 @@ async function getUserWatchLater(sess) {
  */
 async function getUserProfile(sess) {
   try {
-    const cookieHeader = await getCookieHeaderFromSession(sess);
-    if (!cookieHeader) return { loggedIn: false };
+    const { cookieHeader, cookieMap } = await getCookiesDataFromSession(sess);
+    if (!cookieHeader || (!cookieMap['SAPISID'] && !cookieMap['__Secure-3PAPISID'])) {
+      return { loggedIn: false };
+    }
 
-    return new Promise((resolve) => {
-      const postData = JSON.stringify({
-        context: {
-          client: {
-            clientName: 'WEB_REMIX',
-            clientVersion: '1.20241020.01.00',
-            hl: 'es-419',
-            gl: 'PE',
-          },
-        },
-      });
-
-      const req = https.request(
-        'https://music.youtube.com/youtubei/v1/account/account_menu?alt=json',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent':
-              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            Cookie: cookieHeader,
-          },
-        },
-        (res) => {
-          let b = '';
-          res.on('data', (c) => (b += c));
-          res.on('end', () => {
-            try {
-              const data = JSON.parse(b);
-              const active =
-                data.actions?.[0]?.openPopupAction?.popup?.multiPageMenuRenderer?.header
-                  ?.activeAccountHeaderRenderer;
-              if (active) {
-                const name = active.accountName?.runs?.[0]?.text || 'Usuario';
-                const email =
-                  active.email?.runs?.[0]?.text || active.channelHandle?.runs?.[0]?.text || '';
-                const avatar = active.accountPhoto?.thumbnails?.slice(-1)[0]?.url || '';
-                return resolve({ loggedIn: true, name, email, avatar });
-              }
-              resolve({ loggedIn: false });
-            } catch (e) {
-              resolve({ loggedIn: false });
-            }
-          });
-        }
-      );
-
-      req.on('error', () => resolve({ loggedIn: false }));
-      req.write(postData);
-      req.end();
-    });
+    const { data } = await callYouTubeMusicApi(sess, 'account/account_menu', {});
+    const active =
+      data?.actions?.[0]?.openPopupAction?.popup?.multiPageMenuRenderer?.header
+        ?.activeAccountHeaderRenderer;
+    if (active) {
+      const name = active.accountName?.runs?.[0]?.text || 'Usuario';
+      const email =
+        active.email?.runs?.[0]?.text || active.channelHandle?.runs?.[0]?.text || '';
+      const avatar = active.accountPhoto?.thumbnails?.slice(-1)[0]?.url || '';
+      return { loggedIn: true, name, email, avatar };
+    }
+    return { loggedIn: true, name: 'Cuenta Conectada', email: '', avatar: '' };
   } catch (e) {
     return { loggedIn: false };
   }
 }
 
 module.exports = {
-  getExploreData,
-  getCategoryTracks,
-  getUserLikedMusic,
-  getUserWatchLater,
-  getUserProfile,
   getCookieHeaderFromSession,
+  getCookiesDataFromSession,
+  buildSapisidHashHeader,
+  searchYouTubeMusicTrack,
+  likeSongOnYouTubeMusic,
+  createPlaylistOnYouTubeMusic,
+  addVideosToYouTubePlaylist,
+  getUserProfile,
 };

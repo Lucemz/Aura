@@ -1,0 +1,941 @@
+import React, { useState } from 'react';
+import {
+  X,
+  Music,
+  Heart,
+  ListMusic,
+  Disc,
+  Link2,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  ArrowRight,
+  ExternalLink,
+  CheckSquare,
+  Square,
+  RefreshCw,
+} from 'lucide-react';
+import {
+  ImportedTrack,
+  ImportedPlaylist,
+  ImportedAlbum,
+  ProviderLibraryResult,
+  TransferLogItem,
+} from '../types';
+
+interface MusicImporterModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  ytmLoggedIn: boolean;
+  onOpenGoogleLogin: () => void;
+  onNavigateIframe: (url: string) => void;
+  onLikeTrackInWebview: (videoId: string) => Promise<boolean>;
+  onCreatePlaylistInWebview: (
+    title: string,
+    description: string,
+    videoIds: string[]
+  ) => Promise<string | null>;
+}
+
+export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
+  isOpen,
+  onClose,
+  ytmLoggedIn,
+  onOpenGoogleLogin,
+  onNavigateIframe,
+  onLikeTrackInWebview,
+  onCreatePlaylistInWebview,
+}) => {
+  const [sourceTab, setSourceTab] = useState<'spotify' | 'apple' | 'url'>('spotify');
+  const [categoryTab, setCategoryTab] = useState<'likes' | 'playlists' | 'albums'>('likes');
+
+  // Provider Library State
+  const [spotifyData, setSpotifyData] = useState<ProviderLibraryResult | null>(null);
+  const [appleData, setAppleData] = useState<ProviderLibraryResult | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  // URL Parser State
+  const [urlInput, setUrlInput] = useState('');
+  const [urlParsedData, setUrlParsedData] = useState<{
+    title: string;
+    tracks: ImportedTrack[];
+  } | null>(null);
+  const [isParsingUrl, setIsParsingUrl] = useState(false);
+
+  // Selection State for Liked Songs
+  const [selectedTrackIndices, setSelectedTrackIndices] = useState<Set<number>>(new Set());
+
+  // Transfer Progress State
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferDestination, setTransferDestination] = useState<'likes' | 'playlist'>('likes');
+  const [customPlaylistName, setCustomPlaylistName] = useState('');
+  const [transferLogs, setTransferLogs] = useState<TransferLogItem[]>([]);
+  const [transferDone, setTransferDone] = useState(false);
+  const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const currentProviderData = sourceTab === 'spotify' ? spotifyData : appleData;
+
+  const handleConnectProvider = async (provider: 'spotify' | 'apple') => {
+    setStatusError(null);
+    setIsConnecting(true);
+    try {
+      const res =
+        provider === 'spotify'
+          ? await window.auraAPI?.connectSpotify()
+          : await window.auraAPI?.connectAppleMusic();
+
+      if (res && res.ok) {
+        if (provider === 'spotify') {
+          setSpotifyData(res);
+        } else {
+          setAppleData(res);
+        }
+        // Select all liked songs by default
+        const allIndices = new Set((res.likedSongs || []).map((_, idx) => idx));
+        setSelectedTrackIndices(allIndices);
+      } else {
+        setStatusError(res?.error || 'No se pudo conectar la cuenta.');
+      }
+    } catch (err: any) {
+      setStatusError(err.message || 'Error al conectar con el proveedor.');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleParseUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!urlInput.trim()) return;
+    setStatusError(null);
+    setIsParsingUrl(true);
+    try {
+      const res = await window.auraAPI?.parseExternalMusicUrl(urlInput.trim());
+      if (res && res.ok && res.tracks && res.tracks.length > 0) {
+        setUrlParsedData({
+          title: res.title || 'Playlist Importada',
+          tracks: res.tracks,
+        });
+        setCustomPlaylistName(res.title || 'Playlist Importada');
+        setSelectedTrackIndices(new Set(res.tracks.map((_, idx) => idx)));
+      } else {
+        setStatusError(
+          res?.error || 'No se encontraron pistas en ese enlace. Verifica que la lista sea pública.'
+        );
+      }
+    } catch (err: any) {
+      setStatusError(err.message || 'Error al analizar el enlace.');
+    } finally {
+      setIsParsingUrl(false);
+    }
+  };
+
+  const toggleTrackSelection = (idx: number) => {
+    const next = new Set(selectedTrackIndices);
+    if (next.has(idx)) {
+      next.delete(idx);
+    } else {
+      next.add(idx);
+    }
+    setSelectedTrackIndices(next);
+  };
+
+  const toggleSelectAllTracks = (tracks: ImportedTrack[]) => {
+    if (selectedTrackIndices.size === tracks.length) {
+      setSelectedTrackIndices(new Set());
+    } else {
+      setSelectedTrackIndices(new Set(tracks.map((_, i) => i)));
+    }
+  };
+
+  /**
+   * Core Transfer Execution:
+   * 1. Matches each song on YouTube Music
+   * 2. Sends REAL Likes (`like/like`) or Creates a REAL Playlist (`playlist/create`) on the user's YouTube Music account
+   */
+  const startTransfer = async (
+    tracksToTransfer: ImportedTrack[],
+    destination: 'likes' | 'playlist',
+    playlistTitle = 'Playlist Importada'
+  ) => {
+    if (!tracksToTransfer.length) return;
+    setStatusError(null);
+    setIsTransferring(true);
+    setTransferDone(false);
+    setCreatedPlaylistId(null);
+    setTransferDestination(destination);
+
+    const initialLogs: TransferLogItem[] = tracksToTransfer.map((t) => ({
+      title: t.title,
+      artist: t.artist,
+      status: 'pending',
+    }));
+    setTransferLogs(initialLogs);
+
+    const matchedVideoIds: string[] = [];
+
+    for (let i = 0; i < tracksToTransfer.length; i++) {
+      const track = tracksToTransfer[i];
+
+      setTransferLogs((prev) =>
+        prev.map((item, idx) => (idx === i ? { ...item, status: 'searching' } : item))
+      );
+
+      try {
+        const match = await window.auraAPI?.searchYouTubeMusicTrack(track.title, track.artist);
+        if (match && match.videoId) {
+          matchedVideoIds.push(match.videoId);
+
+          if (destination === 'likes') {
+            // Execute Like inside the live YouTube Music webview first (for 100% session fidelity), fallback to IPC
+            let likedOk = await onLikeTrackInWebview(match.videoId);
+            if (!likedOk && window.auraAPI?.likeSongOnYouTubeMusic) {
+              const ipcRes = await window.auraAPI.likeSongOnYouTubeMusic(match.videoId);
+              likedOk = ipcRes.ok;
+            }
+
+            setTransferLogs((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: likedOk ? 'synced' : 'failed',
+                      matchedTitle: `${match.artist} - ${match.title}`,
+                      videoId: match.videoId,
+                      error: likedOk ? undefined : 'No se pudo marcar Like (verifica tu sesión)',
+                    }
+                  : item
+              )
+            );
+          } else {
+            // For playlist mode, mark matched and we'll create the playlist with all videoIds
+            setTransferLogs((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: 'synced',
+                      matchedTitle: `${match.artist} - ${match.title}`,
+                      videoId: match.videoId,
+                    }
+                  : item
+              )
+            );
+          }
+        } else {
+          setTransferLogs((prev) =>
+            prev.map((item, idx) =>
+              idx === i
+                ? { ...item, status: 'failed', error: 'No se encontró coincidencia en YT Music' }
+                : item
+            )
+          );
+        }
+      } catch (e: any) {
+        setTransferLogs((prev) =>
+          prev.map((item, idx) =>
+            idx === i ? { ...item, status: 'failed', error: e.message } : item
+          )
+        );
+      }
+    }
+
+    // If destination is 'playlist' and we have matched videoIds, create the real Playlist on YouTube Music!
+    if (destination === 'playlist' && matchedVideoIds.length > 0) {
+      const finalTitle = playlistTitle.trim() || 'Playlist Importada';
+      const desc = 'Transferida a tu cuenta con Aura Music Importer';
+
+      let plId = await onCreatePlaylistInWebview(finalTitle, desc, matchedVideoIds);
+      if (!plId && window.auraAPI?.createPlaylistOnYouTubeMusic) {
+        const res = await window.auraAPI.createPlaylistOnYouTubeMusic(
+          finalTitle,
+          desc,
+          matchedVideoIds
+        );
+        if (res.ok && res.playlistId) {
+          plId = res.playlistId;
+        }
+      }
+      setCreatedPlaylistId(plId);
+    }
+
+    setTransferDone(true);
+  };
+
+  const handleTransferSelectedPlaylist = async (
+    pl: ImportedPlaylist,
+    destination: 'likes' | 'playlist'
+  ) => {
+    setStatusError(null);
+    setIsConnecting(true);
+    try {
+      const tracks =
+        pl.provider === 'spotify'
+          ? await window.auraAPI?.getSpotifyPlaylistTracks(pl.id)
+          : await window.auraAPI?.getApplePlaylistTracks(pl.id);
+
+      setIsConnecting(false);
+      if (tracks && tracks.length > 0) {
+        await startTransfer(tracks, destination, pl.title);
+      } else {
+        setStatusError('No se encontraron canciones dentro de esta playlist.');
+      }
+    } catch (err: any) {
+      setIsConnecting(false);
+      setStatusError(err.message || 'Error al obtener las canciones de la playlist.');
+    }
+  };
+
+  const handleTransferSelectedAlbum = async (
+    al: ImportedAlbum,
+    destination: 'likes' | 'playlist'
+  ) => {
+    if (al.tracks && al.tracks.length > 0) {
+      await startTransfer(al.tracks, destination, `${al.artist} - ${al.title}`);
+      return;
+    }
+    const parsed = await window.auraAPI?.parseExternalMusicUrl(
+      `https://open.spotify.com/album/${al.id}`
+    );
+    if (parsed?.ok && parsed.tracks?.length) {
+      await startTransfer(parsed.tracks, destination, `${al.artist} - ${al.title}`);
+    } else {
+      setStatusError('No se pudieron leer las pistas de este álbum.');
+    }
+  };
+
+  const syncedCount = transferLogs.filter((l) => l.status === 'synced').length;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-[#121212] border border-white/15 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden text-white">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-[#181818]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center">
+              <RefreshCw className="w-5 h-5 text-red-500" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">
+                Importar Música a tu cuenta de YouTube Music
+              </h2>
+              <p className="text-xs text-neutral-400">
+                Conecta Spotify o Apple Music para transferir tus &ldquo;Me gusta&rdquo;, Playlists y Álbumes directamente al iframe de YouTube Music
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Warning if not logged into YouTube Music yet */}
+        {!ytmLoggedIn && (
+          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 text-xs text-amber-200">
+              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span>
+                Para que los <strong>Likes</strong> y <strong>Playlists</strong> se guarden en tu cuenta real de YouTube Music, inicia sesión primero en YouTube Music.
+              </span>
+            </div>
+            <button
+              onClick={onOpenGoogleLogin}
+              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs flex-shrink-0 cursor-pointer transition"
+            >
+              Iniciar sesión en YT Music
+            </button>
+          </div>
+        )}
+
+        {/* Active Transfer Progress View */}
+        {isTransferring ? (
+          <div className="flex-1 flex flex-col p-6 overflow-hidden">
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-white">
+                  {transferDone
+                    ? `¡Transferencia completada! (${syncedCount} de ${transferLogs.length} canciones sincronizadas en tu cuenta de YouTube Music)`
+                    : `Sincronizando con tu cuenta real de YouTube Music... (${syncedCount} / ${transferLogs.length})`}
+                </span>
+                <span className="text-xs font-mono text-neutral-400">
+                  {Math.round((syncedCount / Math.max(transferLogs.length, 1)) * 100)}%
+                </span>
+              </div>
+              <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-red-600 to-emerald-500 transition-all duration-300"
+                  style={{
+                    width: `${Math.round(
+                      (transferLogs.filter((l) => l.status !== 'pending' && l.status !== 'searching')
+                        .length /
+                        Math.max(transferLogs.length, 1)) *
+                        100
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Song by song real-time log */}
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 border border-white/10 rounded-xl p-3 bg-black/40">
+              {transferLogs.map((log, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5 text-xs"
+                >
+                  <div className="min-w-0 flex-1 pr-3">
+                    <p className="font-medium text-white truncate">
+                      {log.title}{' '}
+                      <span className="text-neutral-400 font-normal">— {log.artist}</span>
+                    </p>
+                    {log.matchedTitle && (
+                      <p className="text-[11px] text-emerald-400 truncate">
+                        ✓ Match en YT Music: {log.matchedTitle}
+                      </p>
+                    )}
+                    {log.error && <p className="text-[11px] text-red-400">{log.error}</p>}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {log.status === 'pending' && (
+                      <span className="text-neutral-500">En cola</span>
+                    )}
+                    {log.status === 'searching' && (
+                      <span className="flex items-center gap-1.5 text-amber-400">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Sincronizando...
+                      </span>
+                    )}
+                    {log.status === 'synced' && (
+                      <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                        <CheckCircle2 className="w-4 h-4" />
+                        {transferDestination === 'likes' ? 'Like en YT Music' : 'En Playlist'}
+                      </span>
+                    )}
+                    {log.status === 'failed' && (
+                      <span className="flex items-center gap-1 text-red-400">
+                        <AlertCircle className="w-4 h-4" />
+                        Falló
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer Actions when done */}
+            {transferDone && (
+              <div className="mt-4 flex items-center justify-between pt-3 border-t border-white/10">
+                <button
+                  onClick={() => {
+                    setIsTransferring(false);
+                    setTransferDone(false);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-medium text-white cursor-pointer transition"
+                >
+                  ← Importar más música
+                </button>
+
+                <div className="flex items-center gap-3">
+                  {transferDestination === 'likes' ? (
+                    <button
+                      onClick={() => {
+                        onNavigateIframe('https://music.youtube.com/playlist?list=LM');
+                        onClose();
+                      }}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg cursor-pointer transition"
+                    >
+                      <Heart className="w-4 h-4 fill-current" />
+                      <span>Ver mis &ldquo;Me gusta&rdquo; en YouTube Music ahora</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const targetUrl = createdPlaylistId
+                          ? `https://music.youtube.com/playlist?list=${createdPlaylistId}`
+                          : 'https://music.youtube.com/library/playlists';
+                        onNavigateIframe(targetUrl);
+                        onClose();
+                      }}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg cursor-pointer transition"
+                    >
+                      <ListMusic className="w-4 h-4" />
+                      <span>Ver Playlist creada en YouTube Music ahora</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Main Provider Selection & Library Browser */
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Provider Tabs */}
+            <div className="flex items-center gap-2 px-6 pt-4 border-b border-white/10 bg-[#151515]">
+              <button
+                onClick={() => {
+                  setSourceTab('spotify');
+                  setStatusError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  sourceTab === 'spotify'
+                    ? 'border-[#1DB954] text-[#1DB954] bg-[#1DB954]/10 rounded-t-lg'
+                    : 'border-transparent text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Music className="w-4 h-4" />
+                <span>Cuenta de Spotify</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSourceTab('apple');
+                  setStatusError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  sourceTab === 'apple'
+                    ? 'border-[#FA243C] text-[#FA243C] bg-[#FA243C]/10 rounded-t-lg'
+                    : 'border-transparent text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Disc className="w-4 h-4" />
+                <span>Cuenta de Apple Music</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSourceTab('url');
+                  setStatusError(null);
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  sourceTab === 'url'
+                    ? 'border-sky-400 text-sky-400 bg-sky-400/10 rounded-t-lg'
+                    : 'border-transparent text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Link2 className="w-4 h-4" />
+                <span>Pegar Link de Playlist / Álbum</span>
+              </button>
+            </div>
+
+            {statusError && (
+              <div className="mx-6 mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                <span>{statusError}</span>
+              </div>
+            )}
+
+            {/* TAB 1 & 2: SPOTIFY OR APPLE MUSIC ACCOUNT */}
+            {(sourceTab === 'spotify' || sourceTab === 'apple') && (
+              <div className="flex-1 flex flex-col overflow-hidden p-6">
+                {!currentProviderData ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center py-10">
+                    <div
+                      className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 border ${
+                        sourceTab === 'spotify'
+                          ? 'bg-[#1DB954]/15 border-[#1DB954]/40 text-[#1DB954]'
+                          : 'bg-[#FA243C]/15 border-[#FA243C]/40 text-[#FA243C]'
+                      }`}
+                    >
+                      <Music className="w-8 h-8" />
+                    </div>
+
+                    <h3 className="text-lg font-bold text-white mb-2">
+                      Conectar con {sourceTab === 'spotify' ? 'Spotify' : 'Apple Music'}
+                    </h3>
+                    <p className="text-xs text-neutral-400 max-w-md mb-6 leading-relaxed">
+                      Inicia sesión de forma segura en la ventana emergente de{' '}
+                      {sourceTab === 'spotify' ? 'Spotify' : 'Apple Music'}. Leeremos tus{' '}
+                      <strong>Canciones que te gustan</strong>, <strong>Playlists</strong> y{' '}
+                      <strong>Álbumes</strong> para enviarlos directo a tu cuenta de YouTube Music.
+                    </p>
+
+                    <button
+                      onClick={() => handleConnectProvider(sourceTab)}
+                      disabled={isConnecting}
+                      className={`px-6 py-3 rounded-xl font-bold text-sm text-white flex items-center gap-2.5 shadow-lg cursor-pointer transition disabled:opacity-50 ${
+                        sourceTab === 'spotify'
+                          ? 'bg-[#1DB954] hover:bg-[#1ed760] text-black'
+                          : 'bg-[#FA243C] hover:bg-[#ff3b51]'
+                      }`}
+                    >
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Conectando y leyendo biblioteca...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>
+                            Iniciar sesión en {sourceTab === 'spotify' ? 'Spotify' : 'Apple Music'}
+                          </span>
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  /* Connected Library View */
+                  <div className="flex-1 flex flex-col overflow-hidden">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setCategoryTab('likes')}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                            categoryTab === 'likes'
+                              ? 'bg-white text-black'
+                              : 'bg-white/5 text-neutral-300 hover:bg-white/10'
+                          }`}
+                        >
+                          <Heart className="w-3.5 h-3.5" />
+                          <span>
+                            Canciones que te gustan ({currentProviderData.likedSongs.length})
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => setCategoryTab('playlists')}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                            categoryTab === 'playlists'
+                              ? 'bg-white text-black'
+                              : 'bg-white/5 text-neutral-300 hover:bg-white/10'
+                          }`}
+                        >
+                          <ListMusic className="w-3.5 h-3.5" />
+                          <span>Playlists ({currentProviderData.playlists.length})</span>
+                        </button>
+
+                        <button
+                          onClick={() => setCategoryTab('albums')}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                            categoryTab === 'albums'
+                              ? 'bg-white text-black'
+                              : 'bg-white/5 text-neutral-300 hover:bg-white/10'
+                          }`}
+                        >
+                          <Disc className="w-3.5 h-3.5" />
+                          <span>Álbumes ({currentProviderData.albums.length})</span>
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => handleConnectProvider(sourceTab)}
+                        className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Recargar</span>
+                      </button>
+                    </div>
+
+                    {/* CATEGORY 1: LIKED SONGS */}
+                    {categoryTab === 'likes' && (
+                      <div className="flex-1 flex flex-col overflow-hidden">
+                        <div className="flex items-center justify-between mb-2 px-1">
+                          <button
+                            onClick={() => toggleSelectAllTracks(currentProviderData.likedSongs)}
+                            className="text-xs text-neutral-300 hover:text-white flex items-center gap-1.5 cursor-pointer"
+                          >
+                            {selectedTrackIndices.size === currentProviderData.likedSongs.length ? (
+                              <CheckSquare className="w-4 h-4 text-emerald-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-neutral-500" />
+                            )}
+                            <span>
+                              Seleccionar todas ({selectedTrackIndices.size} seleccionadas)
+                            </span>
+                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              disabled={selectedTrackIndices.size === 0}
+                              onClick={() => {
+                                const chosen = currentProviderData.likedSongs.filter((_, i) =>
+                                  selectedTrackIndices.has(i)
+                                );
+                                startTransfer(chosen, 'likes');
+                              }}
+                              className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 shadow cursor-pointer transition"
+                            >
+                              <Heart className="w-3.5 h-3.5 fill-current" />
+                              <span>
+                                Enviar a mis &ldquo;Me gusta&rdquo; de YouTube Music
+                              </span>
+                            </button>
+
+                            <button
+                              disabled={selectedTrackIndices.size === 0}
+                              onClick={() => {
+                                const chosen = currentProviderData.likedSongs.filter((_, i) =>
+                                  selectedTrackIndices.has(i)
+                                );
+                                startTransfer(chosen, 'playlist', 'Favoritas Importadas');
+                              }}
+                              className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-xs font-medium cursor-pointer transition"
+                            >
+                              Crear como Playlist en YT Music
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-1 border border-white/10 rounded-xl p-2 bg-black/30">
+                          {currentProviderData.likedSongs.map((track, idx) => {
+                            const selected = selectedTrackIndices.has(idx);
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() => toggleTrackSelection(idx)}
+                                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition ${
+                                  selected ? 'bg-white/10' : 'hover:bg-white/5 opacity-60'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  {selected ? (
+                                    <CheckSquare className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                  ) : (
+                                    <Square className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+                                  )}
+                                  {track.thumbnail && (
+                                    <img
+                                      src={track.thumbnail}
+                                      alt=""
+                                      className="w-8 h-8 rounded object-cover flex-shrink-0"
+                                    />
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-medium text-white truncate">
+                                      {track.title}
+                                    </p>
+                                    <p className="text-[11px] text-neutral-400 truncate">
+                                      {track.artist}
+                                    </p>
+                                  </div>
+                                </div>
+                                {track.album && (
+                                  <span className="text-[11px] text-neutral-500 truncate max-w-[180px] hidden sm:inline">
+                                    {track.album}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CATEGORY 2: PLAYLISTS */}
+                    {categoryTab === 'playlists' && (
+                      <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3 p-1">
+                        {currentProviderData.playlists.map((pl) => (
+                          <div
+                            key={pl.id}
+                            className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition"
+                          >
+                            <div className="flex items-center gap-3 min-w-0 pr-2">
+                              {pl.thumbnail ? (
+                                <img
+                                  src={pl.thumbnail}
+                                  alt={pl.title}
+                                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
+                                  <ListMusic className="w-6 h-6 text-neutral-400" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white truncate">{pl.title}</p>
+                                <p className="text-[11px] text-neutral-400">
+                                  {pl.trackCount} canciones
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5 flex-shrink-0">
+                              <button
+                                onClick={() => handleTransferSelectedPlaylist(pl, 'playlist')}
+                                disabled={isConnecting}
+                                className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
+                              >
+                                Crear Playlist en YTM
+                              </button>
+                              <button
+                                onClick={() => handleTransferSelectedPlaylist(pl, 'likes')}
+                                disabled={isConnecting}
+                                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
+                              >
+                                Enviar a mis Likes
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* CATEGORY 3: ALBUMS */}
+                    {categoryTab === 'albums' && (
+                      <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3 p-1">
+                        {currentProviderData.albums.map((al) => (
+                          <div
+                            key={al.id}
+                            className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition"
+                          >
+                            <div className="flex items-center gap-3 min-w-0 pr-2">
+                              {al.thumbnail ? (
+                                <img
+                                  src={al.thumbnail}
+                                  alt={al.title}
+                                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
+                                  <Disc className="w-6 h-6 text-neutral-400" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white truncate">{al.title}</p>
+                                <p className="text-[11px] text-neutral-400 truncate">{al.artist}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5 flex-shrink-0">
+                              <button
+                                onClick={() => handleTransferSelectedAlbum(al, 'playlist')}
+                                className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
+                              >
+                                Guardar en YTM
+                              </button>
+                              <button
+                                onClick={() => handleTransferSelectedAlbum(al, 'likes')}
+                                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
+                              >
+                                Likes a sus temas
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: DIRECT URL PASTE (NO LOGIN NEEDED) */}
+            {sourceTab === 'url' && (
+              <div className="flex-1 flex flex-col overflow-hidden p-6">
+                <form onSubmit={handleParseUrl} className="flex items-center gap-2 mb-4">
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    placeholder="Pega el enlace de una Playlist o Álbum de Spotify o Apple Music..."
+                    className="flex-1 bg-black/50 border border-white/15 rounded-xl px-4 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-sky-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isParsingUrl || !urlInput.trim()}
+                    className="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black font-bold text-xs flex items-center gap-2 cursor-pointer transition"
+                  >
+                    {isParsingUrl ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Extrayendo...</span>
+                      </>
+                    ) : (
+                      <span>Cargar Canciones</span>
+                    )}
+                  </button>
+                </form>
+
+                {urlParsedData && (
+                  <div className="flex-1 flex flex-col overflow-hidden">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 bg-white/5 p-3 rounded-xl border border-white/10">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={customPlaylistName}
+                          onChange={(e) => setCustomPlaylistName(e.target.value)}
+                          className="bg-black/40 border border-white/15 rounded-lg px-3 py-1 text-xs font-semibold text-white"
+                        />
+                        <span className="text-xs text-neutral-400">
+                          ({selectedTrackIndices.size} de {urlParsedData.tracks.length} temas)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            const chosen = urlParsedData.tracks.filter((_, i) =>
+                              selectedTrackIndices.has(i)
+                            );
+                            startTransfer(chosen, 'likes');
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                        >
+                          <Heart className="w-3.5 h-3.5 fill-current" />
+                          <span>Dar &ldquo;Me gusta&rdquo; en YT Music</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            const chosen = urlParsedData.tracks.filter((_, i) =>
+                              selectedTrackIndices.has(i)
+                            );
+                            startTransfer(chosen, 'playlist', customPlaylistName);
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg bg-white text-black hover:bg-neutral-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                        >
+                          <ListMusic className="w-3.5 h-3.5" />
+                          <span>Crear Playlist en YT Music</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-1 border border-white/10 rounded-xl p-2 bg-black/30">
+                      {urlParsedData.tracks.map((track, idx) => {
+                        const selected = selectedTrackIndices.has(idx);
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => toggleTrackSelection(idx)}
+                            className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition ${
+                              selected ? 'bg-white/10' : 'hover:bg-white/5 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              {selected ? (
+                                <CheckSquare className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                              ) : (
+                                <Square className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-white truncate">
+                                  {track.title}
+                                </p>
+                                <p className="text-[11px] text-neutral-400 truncate">
+                                  {track.artist}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

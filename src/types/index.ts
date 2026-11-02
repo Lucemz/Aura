@@ -1,154 +1,106 @@
-export type ObscurityLevel = 'hits' | 'balanced' | 'underground';
+export interface ImportedTrack {
+  id?: string;
+  title: string;
+  artist: string;
+  album?: string;
+  thumbnail?: string;
+}
 
-export interface Song {
+export interface ImportedPlaylist {
   id: string;
+  provider: 'spotify' | 'apple';
   title: string;
-  artist: string;
-  videoId: string;
-  thumbnail: string;
-  duration: number;
-  durationFormatted: string;
-  aiReason?: string;
-  bpm?: number;
-  energy?: 'chill' | 'medium' | 'high';
-  searchQuery?: string;
-  alternativeVideoIds?: string[];
-  isLiked?: boolean;
-  isSavedWatchLater?: boolean;
+  description?: string;
+  trackCount: number;
+  thumbnail?: string;
+  tracks?: ImportedTrack[];
 }
 
-export interface PlaybackState {
-  isPlaying: boolean;
-  currentTime: number;
-  duration: number;
-  volume: number;
-  isMuted: boolean;
-  isBuffering: boolean;
-  isShuffle: boolean;
-  isRepeat: boolean;
-}
-
-export interface MoodPreset {
+export interface ImportedAlbum {
   id: string;
-  label: string;
-  description: string;
-  icon: string;
-  prompt: string;
-  accentColor: string;
-}
-
-export interface AiRecommendation {
+  provider: 'spotify' | 'apple';
   title: string;
   artist: string;
-  reason: string;
-  bpm?: number;
-  energy?: 'chill' | 'medium' | 'high';
-  subgenre?: string;
+  trackCount: number;
+  thumbnail?: string;
+  tracks?: ImportedTrack[];
 }
 
-export interface SearchResultItem {
-  videoId: string;
+export interface ProviderLibraryResult {
+  ok: boolean;
+  error?: string;
+  profile?: {
+    name: string;
+    avatar: string;
+  } | null;
+  totalLiked?: number;
+  likedSongs: ImportedTrack[];
+  playlists: ImportedPlaylist[];
+  albums: ImportedAlbum[];
+}
+
+export interface TransferLogItem {
   title: string;
   artist: string;
-  duration: number;
-  durationFormatted: string;
-  thumbnail: string;
-  url: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-  songs?: Song[];
-}
-
-export interface CurationSettings {
-  obscurityLevel: ObscurityLevel;
-  preferInstrumental: boolean;
-  avoidCommercial: boolean;
-}
-
-export interface UserTasteProfile {
-  likedSongs: Song[];
-  savedWatchLater: Song[];
-  favoriteArtists: string[];
-  dislikedArtists: string[];
-  playedHistory: string[];
-  totalPlays: number;
-}
-
-export interface TopSongItem {
-  rank: number;
-  title: string;
-  artist: string;
-  videoId: string;
-  thumbnail: string;
-}
-
-export interface ExploreItem {
+  status: 'pending' | 'searching' | 'synced' | 'failed';
+  matchedTitle?: string;
   videoId?: string;
-  title: string;
-  artist?: string;
-  thumbnail: string;
-  durationFormatted?: string;
-  browseId?: string;
-}
-
-export interface MoodCategory {
-  title: string;
-  browseId: string;
-  params: string;
-}
-
-export interface ExploreData {
-  topSongs: TopSongItem[];
-  trending: ExploreItem[];
-  newReleases: ExploreItem[];
-  moodsAndGenres: MoodCategory[];
-}
-
-export interface UserProfile {
-  loggedIn: boolean;
-  name?: string;
-  email?: string;
-  avatar?: string;
-}
-
-export interface AuraAPI {
-  searchYouTube: (query: string) => Promise<{
-    videoId: string;
-    title: string;
-    artist: string;
-    duration: number;
-    durationFormatted: string;
-    thumbnail: string;
-    url: string;
-    alternativeVideoIds?: string[];
-  } | null>;
-  searchMultipleYouTube: (query: string, limit?: number) => Promise<SearchResultItem[]>;
-  getYouTubeExplore: () => Promise<ExploreData>;
-  getYouTubeCategory: (browseId: string, params?: string) => Promise<ExploreItem[]>;
-  getUserLikedMusic: () => Promise<Song[]>;
-  getUserWatchLater: () => Promise<Song[]>;
-  getUserProfile: () => Promise<UserProfile>;
-  openGoogleLogin: () => Promise<boolean>;
-  openBrowserLogin: () => Promise<boolean>;
-  logout: () => Promise<boolean>;
-  saveCookies: (cookieStr: string) => Promise<boolean>;
-  toggleMiniPlayer: () => Promise<boolean>;
-  isMiniPlayer: () => Promise<boolean>;
-  minimizeWindow: () => Promise<void>;
-  closeWindow: () => Promise<void>;
-  onAuthSuccess: (callback: () => void) => () => void;
-  onMediaKey: (action: 'toggle-play' | 'next' | 'previous', callback: () => void) => () => void;
+  error?: string;
 }
 
 declare global {
   interface Window {
-    auraAPI?: AuraAPI;
-    onYouTubeIframeAPIReady?: () => void;
-    YT?: any;
+    auraAPI?: {
+      getUserProfile: () => Promise<{
+        loggedIn: boolean;
+        name?: string;
+        email?: string;
+        avatar?: string;
+      }>;
+      getSapisidAuthHeader: () => Promise<string | null>;
+      openGoogleLogin: () => Promise<boolean>;
+      logout: () => Promise<boolean>;
+      onAuthSuccess: (callback: () => void) => () => void;
+
+      connectSpotify: () => Promise<ProviderLibraryResult>;
+      getSpotifyPlaylistTracks: (playlistId: string) => Promise<ImportedTrack[]>;
+      connectAppleMusic: () => Promise<ProviderLibraryResult>;
+      getApplePlaylistTracks: (playlistId: string) => Promise<ImportedTrack[]>;
+      parseExternalMusicUrl: (url: string) => Promise<{
+        ok: boolean;
+        provider?: 'spotify' | 'apple';
+        title?: string;
+        thumbnail?: string;
+        tracks?: ImportedTrack[];
+        error?: string;
+      }>;
+
+      searchYouTubeMusicTrack: (
+        title: string,
+        artist: string
+      ) => Promise<{
+        videoId: string;
+        title: string;
+        artist: string;
+        thumbnail: string;
+      } | null>;
+      likeSongOnYouTubeMusic: (videoId: string) => Promise<{ ok: boolean; error?: string }>;
+      createPlaylistOnYouTubeMusic: (
+        title: string,
+        description: string,
+        videoIds?: string[]
+      ) => Promise<{ ok: boolean; playlistId?: string; error?: string }>;
+      addVideosToYouTubePlaylist: (
+        playlistId: string,
+        videoIds: string[]
+      ) => Promise<{ ok: boolean; error?: string }>;
+
+      toggleMiniPlayer: () => Promise<boolean>;
+      isMiniPlayer: () => Promise<boolean>;
+      onMediaKey: (
+        action: 'toggle-play' | 'next' | 'previous',
+        callback: () => void
+      ) => () => void;
+    };
   }
 }

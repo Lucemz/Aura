@@ -1,946 +1,595 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Song, PlaybackState, ChatMessage, CurationSettings, UserProfile } from './types';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  getAiCuratedPlaylist,
-  getSmartSkipRecommendations,
-  chatWithAiDj,
-  getSimilarSongsForTrack,
-} from './services/aiDjService';
-import { resolveSongFromYouTube } from './services/youtubeService';
-import {
-  getUserTasteProfile,
-  toggleLikeSong,
-  toggleWatchLaterSong,
-  getCombinedLikedSongs,
-  getCombinedWatchLater,
-  recordPlayedSong,
-  getCurationSettings,
-  saveCurationSettings,
-} from './services/tasteProfileService';
-import { YouTubeAudioPlayer } from './components/YouTubeAudioPlayer';
-import { PromptBar } from './components/PromptBar';
-import { NowPlayingView } from './components/NowPlayingView';
-import { QueueList } from './components/QueueList';
-import { PlayerControls } from './components/PlayerControls';
-import { MiniPlayerView } from './components/MiniPlayerView';
-import { SettingsModal } from './components/SettingsModal';
-import { AiDjChatSidebar } from './components/AiDjChatSidebar';
-import { ExploreView } from './components/ExploreView';
-import { LibraryView } from './components/LibraryView';
-import { Sparkles, Radio, MessageSquare, Compass, Heart, Clock, Music2, User } from 'lucide-react';
+  ArrowLeft,
+  ArrowRight,
+  RotateCw,
+  Home,
+  Heart,
+  RefreshCw,
+  Settings,
+  Minimize2,
+  Maximize2,
+  ShieldCheck,
+  Sliders,
+  LogIn,
+  LogOut,
+  Check,
+} from 'lucide-react';
+import { MusicImporterModal } from './components/MusicImporterModal';
 
-const STORAGE_LAST_PLAYED = 'aura_last_played_song';
-const SILENT_AUDIO_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
-
-const RANDOM_STARTERS = [
-  'Coldplay - Yellow',
-  'Bad Bunny - DÁKITI',
-  'Daft Punk - Get Lucky',
-  'HOME - Resonance',
-  'The Weeknd - Blinding Lights',
-  'Soda Stereo - De Música Ligera',
-  'Guitarras andinas solistas',
-];
+type AudioPreset = 'flat' | 'bass' | 'vocal' | 'warm';
 
 export const App: React.FC = () => {
-  const [currentSong, setCurrentSong] = useState<Song | null>(null);
-  const [queue, setQueue] = useState<Song[]>([]);
-  const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    isPlaying: false,
-    currentTime: 0,
-    duration: 0,
-    volume: 90,
-    isMuted: false,
-    isBuffering: false,
-    isShuffle: false,
-    isRepeat: false,
-  });
-  const [seekTime, setSeekTime] = useState<number | null>(null);
-  const [isLoadingAi, setIsLoadingAi] = useState(false);
-  const [aiProgressStep, setAiProgressStep] = useState<string | null>(null);
-  const [lastPrompt, setLastPrompt] = useState('Radio Inteligente');
-  const [isMiniPlayer, setIsMiniPlayer] = useState(false);
+  const webviewRef = useRef<any>(null);
+
+  const [ytmProfile, setYtmProfile] = useState<{
+    loggedIn: boolean;
+    name?: string;
+    email?: string;
+    avatar?: string;
+  }>({ loggedIn: false });
+
+  const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [showVideo, setShowVideo] = useState(false);
+  const [isMiniPlayer, setIsMiniPlayer] = useState(false);
+  const [audioPreset, setAudioPreset] = useState<AudioPreset>('flat');
+  const [autoSkipAds, setAutoSkipAds] = useState(true);
 
-  // Top View Navigation: Player | Explore | Liked | Watch Later
-  const [activeTab, setActiveTab] = useState<'player' | 'explore' | 'liked' | 'watchLater'>('player');
-  const [likedSongs, setLikedSongs] = useState<Song[]>([]);
-  const [watchLaterSongs, setWatchLaterSongs] = useState<Song[]>([]);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-
-  // Conversational DJ State & Curation Settings
-  const [isDjChatOpen, setIsDjChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [curationSettings, setCurationSettings] = useState<CurationSettings>(() => getCurationSettings());
-
-  const playedHistoryRef = useRef<string[]>([]);
-  const queueRef = useRef<Song[]>([]);
-  const currentSongRef = useRef<Song | null>(null);
-  const curationSettingsRef = useRef<CurationSettings>(curationSettings);
-
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
-
-  useEffect(() => {
-    currentSongRef.current = currentSong;
-    if (currentSong) {
-      try {
-        localStorage.setItem(STORAGE_LAST_PLAYED, JSON.stringify(currentSong));
-      } catch (e) {}
-    }
-  }, [currentSong]);
-
-  useEffect(() => {
-    curationSettingsRef.current = curationSettings;
-    saveCurationSettings(curationSettings);
-  }, [curationSettings]);
-
-  // Toggle Mini-Player state
-  const handleToggleMini = async () => {
-    if (window.auraAPI?.toggleMiniPlayer) {
-      const active = await window.auraAPI.toggleMiniPlayer();
-      setIsMiniPlayer(active);
-    } else {
-      setIsMiniPlayer(!isMiniPlayer);
-    }
-  };
-
-  /**
-   * Generates a dynamic 5-track Auto-Radio queue matching ANY song being played
-   */
-  const populateSimilarRadio = useCallback(async (song: Song) => {
-    try {
-      console.log('[App Radio] Populating similar queue for:', song.title, song.artist);
-      const similarRecs = await getSimilarSongsForTrack(song, curationSettingsRef.current);
-
-      if (similarRecs && similarRecs.length > 0) {
-        const resolvedQueue: Song[] = [];
-        for (const rec of similarRecs) {
-          const s = await resolveSongFromYouTube(rec);
-          resolvedQueue.push(s);
-          playedHistoryRef.current.push(`${s.artist} - ${s.title}`);
-        }
-        setQueue(resolvedQueue);
-      }
-    } catch (err) {
-      console.warn('[App Radio] Failed to populate similar queue:', err);
-    }
-  }, []);
-
-  // Process a prompt with live progress and instant playback of track 1
-  const handlePromptSubmit = useCallback(
-    async (prompt: string) => {
-      setIsLoadingAi(true);
-      setLastPrompt(prompt);
-      setAiProgressStep('Analizando intención y descartando recopilaciones...');
-
-      try {
-        const recommendations = await getAiCuratedPlaylist(
-          prompt,
-          playedHistoryRef.current,
-          curationSettingsRef.current
-        );
-
-        if (!recommendations || recommendations.length === 0) {
-          setAiProgressStep('No se encontraron canciones para esta petición.');
-          setTimeout(() => setAiProgressStep(null), 2500);
-          return;
-        }
-
-        // STEP 1: Resolve track 1 and play IMMEDIATELY
-        setAiProgressStep(`Conectando pista de estudio: "${recommendations[0].title}"...`);
-        const firstSong = await resolveSongFromYouTube(recommendations[0]);
-        playedHistoryRef.current.push(`${firstSong.artist} - ${firstSong.title}`);
-
-        console.log('[App] Auto-playing first track instantly:', firstSong.title, firstSong.videoId);
-        recordPlayedSong(firstSong);
-        setCurrentSong(firstSong);
-        setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-        setAiProgressStep(`▶ Reproduciendo "${firstSong.title}" al instante`);
-
-        setTimeout(() => setAiProgressStep(null), 2500);
-
-        // STEP 2: In the background, resolve remaining recommendations for the queue
-        const remainingRecs = recommendations.slice(1);
-        if (remainingRecs.length > 0) {
-          const resolvedRest: Song[] = [];
-          for (const rec of remainingRecs) {
-            const song = await resolveSongFromYouTube(rec);
-            resolvedRest.push(song);
-            playedHistoryRef.current.push(`${song.artist} - ${song.title}`);
-          }
-          setQueue(resolvedRest);
-        } else {
-          // If less than 2 tracks, auto-populate radio matching the first track
-          populateSimilarRadio(firstSong);
-        }
-      } catch (err) {
-        console.error('Failed to generate playlist:', err);
-        setAiProgressStep(null);
-      } finally {
-        setIsLoadingAi(false);
-      }
-    },
-    [populateSimilarRadio]
-  );
-
-  // Conversational DJ Chat handler with instant playback
-  const handleSendMessageToDj = useCallback(
-    async (userText: string) => {
-      const userMsg: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content: userText,
-        timestamp: Date.now(),
-      };
-
-      setChatMessages((prev) => [...prev, userMsg]);
-      setIsLoadingAi(true);
-      setAiProgressStep('El DJ está analizando tu pedido...');
-
-      try {
-        const history = chatMessages.map((m) => ({ role: m.role, content: m.content }));
-        const response = await chatWithAiDj(
-          userText,
-          history,
-          currentSongRef.current,
-          curationSettingsRef.current
-        );
-
-        if (response.recommendations.length > 0) {
-          setAiProgressStep(`Conectando pista recomendada: "${response.recommendations[0].title}"...`);
-
-          // Play track 1 immediately
-          const firstSong = await resolveSongFromYouTube(response.recommendations[0]);
-          recordPlayedSong(firstSong);
-          setCurrentSong(firstSong);
-          setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-          setAiProgressStep(`▶ Reproduciendo "${firstSong.title}"`);
-          setTimeout(() => setAiProgressStep(null), 2500);
-
-          // Resolve the rest in background
-          const remainingRecs = response.recommendations.slice(1);
-          const resolvedRest: Song[] = [];
-          for (const rec of remainingRecs) {
-            const song = await resolveSongFromYouTube(rec);
-            resolvedRest.push(song);
-          }
-          setQueue(resolvedRest);
-
-          const djMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: response.commentary,
-            timestamp: Date.now(),
-            songs: [firstSong, ...resolvedRest],
-          };
-          setChatMessages((prev) => [...prev, djMsg]);
-        } else {
-          const djMsg: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: response.commentary,
-            timestamp: Date.now(),
-          };
-          setChatMessages((prev) => [...prev, djMsg]);
-          setAiProgressStep(null);
-        }
-      } catch (e) {
-        console.error('[App] DJ chat error:', e);
-        setAiProgressStep(null);
-      } finally {
-        setIsLoadingAi(false);
-      }
-    },
-    [chatMessages]
-  );
-
-  // Direct song playback from Global Search Bar -> Automatically triggers 5 similar songs in Queue!
-  const handlePlayDirectSong = useCallback(
-    (song: Song) => {
-      console.log('[App] Playing direct single from search:', song.title, song.videoId);
-      recordPlayedSong(song);
-      setCurrentSong(song);
-      setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-      setLastPrompt(`Radio: ${song.title}`);
-
-      // Immediately regenerate the queue with 5 tracks similar to this newly played song!
-      populateSimilarRadio(song);
-    },
-    [populateSimilarRadio]
-  );
-
-  // Add song to queue from Global Search Bar
-  const handleAddSongToQueue = useCallback((song: Song) => {
-    console.log('[App] Adding single to queue from search:', song.title);
-    setQueue((prev) => [...prev, song]);
-  }, []);
-
-  // Library & Profile Refresh Engine
-  const refreshLibrary = useCallback(async () => {
-    try {
-      const [liked, wl] = await Promise.all([
-        getCombinedLikedSongs(),
-        getCombinedWatchLater(),
-      ]);
-      setLikedSongs(liked);
-      setWatchLaterSongs(wl);
-    } catch (e) {}
-  }, []);
-
-  const refreshProfile = useCallback(async () => {
+  // Check YouTube Music login status
+  const checkAuthStatus = useCallback(async () => {
     if (window.auraAPI?.getUserProfile) {
-      try {
-        const p = await window.auraAPI.getUserProfile();
-        setUserProfile(p);
-      } catch (e) {}
+      const profile = await window.auraAPI.getUserProfile();
+      setYtmProfile(profile);
     }
   }, []);
 
   useEffect(() => {
-    refreshLibrary();
-    refreshProfile();
-  }, [refreshLibrary, refreshProfile]);
-
-  useEffect(() => {
-    if (!window.auraAPI?.onAuthSuccess) return;
-    const unreg = window.auraAPI.onAuthSuccess(() => {
-      console.log('[App] Auth success detected, refreshing library and profile...');
-      refreshLibrary();
-      refreshProfile();
-    });
-    return () => unreg();
-  }, [refreshLibrary, refreshProfile]);
-
-  const likedSongIds = React.useMemo(() => new Set(likedSongs.map((s) => s.videoId)), [likedSongs]);
-  const watchLaterSongIds = React.useMemo(() => new Set(watchLaterSongs.map((s) => s.videoId)), [watchLaterSongs]);
-
-  // Toggle Like on song (Trains user taste profile & library)
-  const handleToggleLike = useCallback((song: Song) => {
-    const { isLiked } = toggleLikeSong(song);
-    setCurrentSong((prev) => (prev && prev.videoId === song.videoId ? { ...prev, isLiked } : prev));
-    setQueue((prev) =>
-      prev.map((s) => (s.videoId === song.videoId ? { ...s, isLiked } : s))
-    );
-    refreshLibrary();
-  }, [refreshLibrary]);
-
-  // Toggle Watch Later on song
-  const handleToggleWatchLater = useCallback((song: Song) => {
-    const { isSaved } = toggleWatchLaterSong(song);
-    setCurrentSong((prev) => (prev && prev.videoId === song.videoId ? { ...prev, isSavedWatchLater: isSaved } : prev));
-    setQueue((prev) =>
-      prev.map((s) => (s.videoId === song.videoId ? { ...s, isSavedWatchLater: isSaved } : s))
-    );
-    refreshLibrary();
-  }, [refreshLibrary]);
-
-  // Play all songs from library
-  const handlePlayAll = useCallback((songs: Song[]) => {
-    if (!songs || songs.length === 0) return;
-    const [first, ...rest] = songs;
-    recordPlayedSong(first);
-    setCurrentSong(first);
-    setQueue(rest);
-    setPlaybackState((p) => ({ ...p, isPlaying: true, currentTime: 0 }));
-    populateSimilarRadio(first);
-  }, [populateSimilarRadio]);
-
-  // Shuffle all songs from library
-  const handleShuffleAll = useCallback((songs: Song[]) => {
-    if (!songs || songs.length === 0) return;
-    const shuffled = [...songs].sort(() => Math.random() - 0.5);
-    const [first, ...rest] = shuffled;
-    recordPlayedSong(first);
-    setCurrentSong(first);
-    setQueue(rest);
-    setPlaybackState((p) => ({ ...p, isPlaying: true, currentTime: 0 }));
-    populateSimilarRadio(first);
-  }, [populateSimilarRadio]);
-
-  // History stack for Previous Track playback
-  const playedStackRef = useRef<Song[]>([]);
-  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Unified Toggle Play function
-  const handleTogglePlay = useCallback(() => {
-    setPlaybackState((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
-  }, []);
-
-  const handleTogglePlayRef = useRef(handleTogglePlay);
-  const handleNextRef = useRef<() => void>(() => {});
-  const handlePreviousRef = useRef<() => void>(() => {});
-
-  useEffect(() => {
-    handleTogglePlayRef.current = handleTogglePlay;
-  }, [handleTogglePlay]);
-
-  // Next Track using current queueRef + recording into playedStackRef
-  const handleNext = useCallback(() => {
-    if (currentSongRef.current) {
-      playedStackRef.current.push(currentSongRef.current);
-      if (playedStackRef.current.length > 50) {
-        playedStackRef.current.shift();
-      }
-    }
-
-    if (queueRef.current.length > 0) {
-      const nextSong = queueRef.current[0];
-      const remainingQueue = queueRef.current.slice(1);
-      recordPlayedSong(nextSong);
-      setCurrentSong(nextSong);
-      setQueue(remainingQueue);
-      setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-
-      if (remainingQueue.length <= 2) {
-        populateSimilarRadio(nextSong);
-      }
-    } else if (currentSongRef.current) {
-      populateSimilarRadio(currentSongRef.current);
-    }
-  }, [populateSimilarRadio]);
-
-  // Previous Track: Rewind if > 3s, otherwise go back to previous song from history
-  const handlePrevious = useCallback(() => {
-    if (playbackState.currentTime > 3) {
-      setSeekTime(0);
-      return;
-    }
-
-    if (playedStackRef.current.length > 0) {
-      const prevSong = playedStackRef.current.pop()!;
-      if (currentSongRef.current) {
-        setQueue((prev) => [currentSongRef.current!, ...prev]);
-      }
-      setCurrentSong(prevSong);
-      setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-    } else {
-      setSeekTime(0);
-    }
-  }, [playbackState.currentTime]);
-
-  useEffect(() => {
-    handleNextRef.current = handleNext;
-  }, [handleNext]);
-
-  useEffect(() => {
-    handlePreviousRef.current = handlePrevious;
-  }, [handlePrevious]);
-
-  // Track end callback
-  const handleTrackEnd = useCallback(() => {
-    console.log('[App] handleTrackEnd called. Remaining in queue:', queueRef.current.length);
-    if (playbackState.isRepeat && currentSongRef.current) {
-      setSeekTime(0);
-      setPlaybackState((prev) => ({ ...prev, isPlaying: true }));
-      return;
-    }
-    handleNext();
-  }, [playbackState.isRepeat, handleNext]);
-
-  // Smart Skip (AI Feedback Loop)
-  const handleSmartSkip = useCallback(async () => {
-    const song = currentSongRef.current;
-    if (!song) return;
-    setIsLoadingAi(true);
-
-    try {
-      const newRecs = await getSmartSkipRecommendations(
-        song,
-        lastPrompt,
-        curationSettingsRef.current
-      );
-
-      const replacementSongs: Song[] = [];
-      for (const rec of newRecs) {
-        const resolved = await resolveSongFromYouTube(rec);
-        replacementSongs.push(resolved);
-      }
-
-      if (replacementSongs.length > 0) {
-        const [nextImmediate, ...rest] = replacementSongs;
-        recordPlayedSong(nextImmediate);
-        setCurrentSong(nextImmediate);
-        setQueue(rest);
-        setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-      } else {
-        handleNext();
-      }
-    } catch (e) {
-      handleNext();
-    } finally {
-      setIsLoadingAi(false);
-    }
-  }, [lastPrompt, handleNext]);
-
-  // Silent audio loop to guarantee macOS CoreAudio registers Aura as the active media app
-  useEffect(() => {
-    if (!silentAudioRef.current) return;
-    silentAudioRef.current.volume = 0.0001;
-    if (playbackState.isPlaying) {
-      silentAudioRef.current.play().catch(() => {});
-    } else {
-      silentAudioRef.current.pause();
-    }
-  }, [playbackState.isPlaying]);
-
-  // Sync MediaSession metadata and state with macOS Control Center, Lock Screen & Touch Bar
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return;
-
-    if (currentSong) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: currentSong.title,
-        artist: currentSong.artist || 'Aura AI',
-        album: 'Aura Music',
-        artwork: currentSong.thumbnail
-          ? [
-              { src: currentSong.thumbnail, sizes: '96x96', type: 'image/jpeg' },
-              { src: currentSong.thumbnail, sizes: '128x128', type: 'image/jpeg' },
-              { src: currentSong.thumbnail, sizes: '192x192', type: 'image/jpeg' },
-              { src: currentSong.thumbnail, sizes: '256x256', type: 'image/jpeg' },
-              { src: currentSong.thumbnail, sizes: '512x512', type: 'image/jpeg' },
-            ]
-          : [],
-      });
-    }
-
-    navigator.mediaSession.playbackState = playbackState.isPlaying ? 'playing' : 'paused';
-  }, [currentSong, playbackState.isPlaying]);
-
-  // Register MediaSession action handlers (macOS physical keys F7/F8/F9, AirPods stem squeeze)
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return;
-
-    try {
-      navigator.mediaSession.setActionHandler('play', () => {
-        console.log('[MediaSession] Play triggered');
-        handleTogglePlayRef.current();
-      });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        console.log('[MediaSession] Pause triggered');
-        handleTogglePlayRef.current();
-      });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        console.log('[MediaSession] Next track triggered');
-        handleNextRef.current();
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        console.log('[MediaSession] Previous track triggered');
-        handlePreviousRef.current();
-      });
-      navigator.mediaSession.setActionHandler('seekto', (details) => {
-        if (details.seekTime != null) {
-          setSeekTime(details.seekTime);
+    checkAuthStatus();
+    if (window.auraAPI?.onAuthSuccess) {
+      return window.auraAPI.onAuthSuccess(() => {
+        checkAuthStatus();
+        // Reload YouTube Music iframe so the logged-in account appears immediately
+        if (webviewRef.current) {
+          try {
+            webviewRef.current.reload();
+          } catch (e) {}
         }
       });
-    } catch (err) {
-      console.warn('[MediaSession] Action handlers not supported:', err);
     }
-  }, []);
+  }, [checkAuthStatus]);
 
-  // In-app keyboard shortcuts (Space, Cmd+Right, Cmd+Left, F8, F9, F7)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      // Never intercept when user is typing in search input or chat textarea
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-      ) {
-        return;
-      }
-
-      // Space: Toggle Play / Pause (when not typing)
-      if (e.code === 'Space') {
-        e.preventDefault();
-        handleTogglePlayRef.current();
-        return;
-      }
-
-      // Mac F8 / MediaPlayPause key in DOM
-      if (e.code === 'F8' || e.key === 'F8' || e.code === 'MediaPlayPause') {
-        e.preventDefault();
-        handleTogglePlayRef.current();
-        return;
-      }
-
-      // Mac F9 / MediaTrackNext in DOM
-      if (e.code === 'F9' || e.key === 'F9' || e.code === 'MediaTrackNext') {
-        e.preventDefault();
-        handleNextRef.current();
-        return;
-      }
-
-      // Mac F7 / MediaTrackPrevious in DOM
-      if (e.code === 'F7' || e.key === 'F7' || e.code === 'MediaTrackPrevious') {
-        e.preventDefault();
-        handlePreviousRef.current();
-        return;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Listen to macOS global media keys from Electron IPC
+  // Connect Mac Media Keys (F7, F8, F9) directly to YouTube Music's native player bar inside the iframe
   useEffect(() => {
     if (!window.auraAPI?.onMediaKey) return;
 
-    const unregPlay = window.auraAPI.onMediaKey('toggle-play', () => {
-      console.log('[IPC] toggle-play event received');
-      handleTogglePlayRef.current();
+    const unsubPlay = window.auraAPI.onMediaKey('toggle-play', () => {
+      if (!webviewRef.current) return;
+      webviewRef.current
+        .executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('#play-pause-button');
+            if (btn) { btn.click(); return; }
+            const video = document.querySelector('video');
+            if (video) { video.paused ? video.play() : video.pause(); }
+          })();
+        `)
+        .catch(() => {});
     });
-    const unregNext = window.auraAPI.onMediaKey('next', () => {
-      console.log('[IPC] next event received');
-      handleNextRef.current();
+
+    const unsubNext = window.auraAPI.onMediaKey('next', () => {
+      if (!webviewRef.current) return;
+      webviewRef.current
+        .executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('.next-button');
+            if (btn) btn.click();
+          })();
+        `)
+        .catch(() => {});
     });
-    const unregPrev = window.auraAPI.onMediaKey('previous', () => {
-      console.log('[IPC] previous event received');
-      handlePreviousRef.current();
+
+    const unsubPrev = window.auraAPI.onMediaKey('previous', () => {
+      if (!webviewRef.current) return;
+      webviewRef.current
+        .executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('.previous-button');
+            if (btn) btn.click();
+          })();
+        `)
+        .catch(() => {});
     });
 
     return () => {
-      unregPlay();
-      unregNext();
-      unregPrev();
+      unsubPlay();
+      unsubNext();
+      unsubPrev();
     };
   }, []);
 
-  // App Startup: Restore LAST PLAYED song or pick a pleasant random starter
+  // Inject Ad-Skipper, "Still Listening?" auto-dismiss, and Web Audio Equalizer into YouTube Music iframe
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_LAST_PLAYED);
-      if (saved) {
-        const song: Song = JSON.parse(saved);
-        if (song && song.videoId) {
-          console.log('[App Startup] Restoring last played song:', song.title, song.artist);
-          setCurrentSong(song);
-          setPlaybackState((prev) => ({ ...prev, isPlaying: true, currentTime: 0 }));
-          setLastPrompt(`Última: ${song.title}`);
-          populateSimilarRadio(song);
-          return;
-        }
-      }
-    } catch (e) {}
+    const wv = webviewRef.current;
+    if (!wv) return;
 
-    // First time ever: pick random pleasant starter
-    const randomVibe = RANDOM_STARTERS[Math.floor(Math.random() * RANDOM_STARTERS.length)];
-    console.log('[App Startup] Initial random starter:', randomVibe);
-    handlePromptSubmit(randomVibe);
+    const handleDomReady = () => {
+      checkAuthStatus();
+      wv.executeJavaScript(`
+        (function() {
+          if (window.__auraEnhancerInstalled) return;
+          window.__auraEnhancerInstalled = true;
+
+          // Auto-skip ads & bypass 'Are you still listening?' prompts
+          setInterval(() => {
+            try {
+              const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+              if (skipBtn) skipBtn.click();
+
+              const adOverlayClose = document.querySelector('.ytp-ad-overlay-close-button');
+              if (adOverlayClose) adOverlayClose.click();
+
+              // Dismiss 'Still listening?' dialog if it pops up
+              const confirmDialog = document.querySelector('ytmusic-you-there-renderer button');
+              if (confirmDialog) confirmDialog.click();
+            } catch (e) {}
+          }, 1000);
+        })();
+      `).catch(() => {});
+    };
+
+    wv.addEventListener('dom-ready', handleDomReady);
+    wv.addEventListener('did-navigate', checkAuthStatus);
+    wv.addEventListener('did-navigate-in-page', checkAuthStatus);
+
+    return () => {
+      try {
+        wv.removeEventListener('dom-ready', handleDomReady);
+        wv.removeEventListener('did-navigate', checkAuthStatus);
+        wv.removeEventListener('did-navigate-in-page', checkAuthStatus);
+      } catch (e) {}
+    };
+  }, [checkAuthStatus]);
+
+  // Apply real-time Web Audio API EQ Preset inside the YouTube Music iframe
+  const applyAudioPreset = (preset: AudioPreset) => {
+    setAudioPreset(preset);
+    if (!webviewRef.current) return;
+
+    const gains = {
+      flat: { bass: 0, mid: 0, treble: 0 },
+      bass: { bass: 7, mid: -1, treble: 2 },
+      vocal: { bass: -2, mid: 5, treble: 3 },
+      warm: { bass: 4, mid: 2, treble: -2 },
+    }[preset];
+
+    webviewRef.current
+      .executeJavaScript(`
+        (function() {
+          try {
+            const video = document.querySelector('video');
+            if (!video) return;
+
+            if (!window.__auraAudioCtx) {
+              const AudioCtx = window.AudioContext || window.webkitAudioContext;
+              const ctx = new AudioCtx();
+              const source = ctx.createMediaElementSource(video);
+
+              const bass = ctx.createBiquadFilter();
+              bass.type = 'lowshelf';
+              bass.frequency.value = 120;
+
+              const mid = ctx.createBiquadFilter();
+              mid.type = 'peaking';
+              mid.frequency.value = 1200;
+
+              const treble = ctx.createBiquadFilter();
+              treble.type = 'highshelf';
+              treble.frequency.value = 8000;
+
+              source.connect(bass);
+              bass.connect(mid);
+              mid.connect(treble);
+              treble.connect(ctx.destination);
+
+              window.__auraAudioCtx = ctx;
+              window.__auraFilters = { bass, mid, treble };
+            }
+
+            if (window.__auraFilters) {
+              window.__auraFilters.bass.gain.value = ${gains.bass};
+              window.__auraFilters.mid.gain.value = ${gains.mid};
+              window.__auraFilters.treble.gain.value = ${gains.treble};
+            }
+          } catch (e) {
+            console.warn('EQ init error:', e);
+          }
+        })();
+      `)
+      .catch(() => {});
+  };
+
+  /**
+   * Executes a REAL Like (`youtubei/v1/like/like`) inside the live YouTube Music iframe
+   * using the user's active `ytcfg` context and `SAPISIDHASH` authorization header.
+   */
+  const handleLikeTrackInWebview = useCallback(async (videoId: string): Promise<boolean> => {
+    if (!webviewRef.current) return false;
+    try {
+      const authHeader = await window.auraAPI?.getSapisidAuthHeader();
+      if (!authHeader) return false;
+
+      const ok = await webviewRef.current.executeJavaScript(`
+        (async function() {
+          try {
+            const ytcfg = window.ytcfg;
+            const context = ytcfg ? ytcfg.get('INNERTUBE_CONTEXT') : {
+              client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: 'es-419', gl: 'PE' }
+            };
+            const apiKey = ytcfg ? ytcfg.get('INNERTUBE_API_KEY') : '';
+            const headers = {
+              'Content-Type': 'application/json',
+              'X-Origin': 'https://music.youtube.com',
+              'X-Goog-AuthUser': ytcfg ? String(ytcfg.get('SESSION_INDEX') || 0) : '0',
+              'Authorization': ${JSON.stringify(authHeader)}
+            };
+            if (ytcfg && ytcfg.get('DELEGATED_SESSION_ID')) {
+              headers['X-Goog-PageId'] = ytcfg.get('DELEGATED_SESSION_ID');
+            }
+            if (ytcfg && ytcfg.get('VISITOR_DATA')) {
+              headers['X-Goog-Visitor-Id'] = ytcfg.get('VISITOR_DATA');
+            }
+            const url = 'https://music.youtube.com/youtubei/v1/like/like?alt=json' + (apiKey ? '&key=' + apiKey : '');
+            const res = await fetch(url, {
+              method: 'POST',
+              credentials: 'include',
+              headers,
+              body: JSON.stringify({
+                context,
+                target: { videoId: ${JSON.stringify(videoId)} }
+              })
+            });
+            return res.ok;
+          } catch (e) {
+            return false;
+          }
+        })();
+      `);
+      return Boolean(ok);
+    } catch (e) {
+      return false;
+    }
   }, []);
 
-  // Single persistent instance of the Dual-Deck YouTube Audio Engine
-  const persistentPlayer = (
-    <YouTubeAudioPlayer
-      currentSong={currentSong}
-      nextSong={queue.length > 0 ? queue[0] : null}
-      isPlaying={playbackState.isPlaying}
-      volume={playbackState.isMuted ? 0 : playbackState.volume}
-      seekTime={seekTime}
-      showVideo={showVideo}
-      onTrackEnd={handleTrackEnd}
-      onTimeUpdate={(current, duration) => {
-        setPlaybackState((prev) => ({ ...prev, currentTime: current, duration }));
-        setSeekTime(null);
-      }}
-      onBuffering={(buffering) => {
-        setPlaybackState((prev) => ({ ...prev, isBuffering: buffering }));
-      }}
-      onPlayingStateChange={(playing) => {
-        setPlaybackState((prev) => ({ ...prev, isPlaying: playing }));
-      }}
-    />
+  /**
+   * Creates a REAL Playlist (`youtubei/v1/playlist/create`) inside the live YouTube Music iframe
+   * and populates all matched tracks.
+   */
+  const handleCreatePlaylistInWebview = useCallback(
+    async (title: string, description: string, videoIds: string[]): Promise<string | null> => {
+      if (!webviewRef.current) return null;
+      try {
+        const authHeader = await window.auraAPI?.getSapisidAuthHeader();
+        if (!authHeader) return null;
+
+        const playlistId = await webviewRef.current.executeJavaScript(`
+          (async function() {
+            try {
+              const ytcfg = window.ytcfg;
+              const context = ytcfg ? ytcfg.get('INNERTUBE_CONTEXT') : {
+                client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: 'es-419', gl: 'PE' }
+              };
+              const apiKey = ytcfg ? ytcfg.get('INNERTUBE_API_KEY') : '';
+              const headers = {
+                'Content-Type': 'application/json',
+                'X-Origin': 'https://music.youtube.com',
+                'X-Goog-AuthUser': ytcfg ? String(ytcfg.get('SESSION_INDEX') || 0) : '0',
+                'Authorization': ${JSON.stringify(authHeader)}
+              };
+              if (ytcfg && ytcfg.get('DELEGATED_SESSION_ID')) {
+                headers['X-Goog-PageId'] = ytcfg.get('DELEGATED_SESSION_ID');
+              }
+              if (ytcfg && ytcfg.get('VISITOR_DATA')) {
+                headers['X-Goog-Visitor-Id'] = ytcfg.get('VISITOR_DATA');
+              }
+              const url = 'https://music.youtube.com/youtubei/v1/playlist/create?alt=json' + (apiKey ? '&key=' + apiKey : '');
+              const res = await fetch(url, {
+                method: 'POST',
+                credentials: 'include',
+                headers,
+                body: JSON.stringify({
+                  context,
+                  title: ${JSON.stringify(title)},
+                  description: ${JSON.stringify(description)},
+                  privacyStatus: 'PRIVATE',
+                  videoIds: ${JSON.stringify(videoIds)}
+                })
+              });
+              if (!res.ok) return null;
+              const data = await res.json();
+              return data.playlistId || null;
+            } catch (e) {
+              return null;
+            }
+          })();
+        `);
+        return playlistId || null;
+      } catch (e) {
+        return null;
+      }
+    },
+    []
   );
 
+  const navigateIframe = (url: string) => {
+    if (!webviewRef.current) return;
+    try {
+      webviewRef.current.loadURL(url);
+    } catch (e) {
+      webviewRef.current.src = url;
+    }
+  };
+
+  const handleToggleMini = async () => {
+    if (window.auraAPI?.toggleMiniPlayer) {
+      const mini = await window.auraAPI.toggleMiniPlayer();
+      setIsMiniPlayer(mini);
+    }
+  };
+
+  const handleOpenGoogleLogin = async () => {
+    if (window.auraAPI?.openGoogleLogin) {
+      await window.auraAPI.openGoogleLogin();
+      await checkAuthStatus();
+      if (webviewRef.current) {
+        try {
+          webviewRef.current.reload();
+        } catch (e) {}
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    if (window.auraAPI?.logout) {
+      await window.auraAPI.logout();
+      setYtmProfile({ loggedIn: false });
+      if (webviewRef.current) {
+        try {
+          webviewRef.current.reload();
+        } catch (e) {}
+      }
+    }
+  };
+
   return (
-    <div className="h-screen w-screen flex flex-col bg-aura-bg text-white relative overflow-hidden select-none">
-      {/* Silent audio element anchoring macOS CoreAudio NowPlaying */}
-      <audio
-        ref={silentAudioRef}
-        src={SILENT_AUDIO_URI}
-        loop
-        preload="auto"
-        style={{ display: 'none' }}
-      />
+    <div className="w-screen h-screen flex flex-col bg-[#030303] text-white overflow-hidden select-none">
+      {/* Slim Native macOS Top Bar */}
+      <header
+        className="h-10 bg-[#0a0a0a] border-b border-white/10 flex items-center justify-between pl-20 pr-3 flex-shrink-0"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        {/* Left Navigation Controls for the YouTube Music Iframe */}
+        <div
+          className="flex items-center gap-1"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <button
+            onClick={() => webviewRef.current?.goBack()}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            title="Atrás"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => webviewRef.current?.goForward()}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            title="Adelante"
+          >
+            <ArrowRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => webviewRef.current?.reload()}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            title="Recargar YouTube Music"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+          </button>
 
-      {/* Mini Player View Mode */}
-      {isMiniPlayer ? (
-        <MiniPlayerView
-          currentSong={currentSong}
-          playbackState={playbackState}
-          onTogglePlay={handleTogglePlay}
-          onNext={handleNext}
-          onPrevious={handlePrevious}
-          onExpand={handleToggleMini}
-        />
-      ) : (
-        /* Full Desktop Window */
-        <>
-          {/* macOS Titlebar & Header */}
-          <header className="mac-drag-region h-14 w-full flex items-center justify-between px-6 pt-2 select-none border-b border-white/5 bg-aura-surface/40 backdrop-blur-md z-20">
-            <div className="flex items-center gap-2 pl-16 mac-no-drag">
-              <div className="flex items-center gap-2 bg-aura-accent/15 border border-aura-accent/30 px-3 py-1 rounded-full">
-                <Radio className="w-3.5 h-3.5 text-aura-accent animate-pulse" />
-                <span className="text-xs font-semibold tracking-wider text-white">AURA</span>
-                <span className="text-[10px] text-aura-accent bg-aura-accent/20 px-1.5 py-0.2 rounded font-mono">
-                  AI-FIRST
-                </span>
-              </div>
-            </div>
+          <div className="h-4 w-[1px] bg-white/10 mx-1" />
 
-            {/* Navigation Tabs Center */}
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 mac-no-drag">
-              <button
-                onClick={() => setActiveTab('player')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  activeTab === 'player'
-                    ? 'bg-aura-accent text-white shadow-neon'
-                    : 'text-aura-subtext hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Music2 className="w-3.5 h-3.5" />
-                <span>Reproductor</span>
-              </button>
+          <button
+            onClick={() => navigateIframe('https://music.youtube.com/')}
+            className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <Home className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Inicio</span>
+          </button>
 
-              <button
-                onClick={() => setActiveTab('explore')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  activeTab === 'explore'
-                    ? 'bg-aura-accent text-white shadow-neon'
-                    : 'text-aura-subtext hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Compass className="w-3.5 h-3.5" />
-                <span>Explorar</span>
-              </button>
+          <button
+            onClick={() => navigateIframe('https://music.youtube.com/playlist?list=LM')}
+            className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5 transition cursor-pointer"
+            title="Ir a Música que me gusta dentro de YouTube Music"
+          >
+            <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500" />
+            <span className="hidden md:inline">Mis Me Gusta</span>
+          </button>
+        </div>
 
-              <button
-                onClick={() => setActiveTab('liked')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  activeTab === 'liked'
-                    ? 'bg-aura-accent text-white shadow-neon'
-                    : 'text-aura-subtext hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Heart className="w-3.5 h-3.5" />
-                <span>Me Gusta</span>
-                {likedSongs.length > 0 && (
-                  <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">
-                    {likedSongs.length}
-                  </span>
-                )}
-              </button>
+        {/* Right Value-Added Controls: Music Importer, EQ, MiniPlayer & Settings */}
+        <div
+          className="flex items-center gap-2 relative"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {/* Primary Value-Add Button: Spotify & Apple Music Importer */}
+          <button
+            onClick={() => setIsImporterOpen(true)}
+            className="px-3 py-1 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Importar de Spotify / Apple Music</span>
+          </button>
 
-              <button
-                onClick={() => setActiveTab('watchLater')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
-                  activeTab === 'watchLater'
-                    ? 'bg-aura-accent text-white shadow-neon'
-                    : 'text-aura-subtext hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Ver Más Tarde</span>
-                {watchLaterSongs.length > 0 && (
-                  <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">
-                    {watchLaterSongs.length}
-                  </span>
-                )}
-              </button>
-            </div>
+          {/* Mini-Player Toggle */}
+          <button
+            onClick={handleToggleMini}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            title={isMiniPlayer ? 'Expandir ventana' : 'Modo Mini-Player Flotante'}
+          >
+            {isMiniPlayer ? (
+              <Maximize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Minimize2 className="w-3.5 h-3.5" />
+            )}
+          </button>
 
-            <div className="flex items-center gap-3 mac-no-drag">
-              <div className="text-xs text-aura-subtext/70 flex items-center gap-1.5">
-                <Sparkles className="w-3 h-3 text-aura-neonCyan" />
-                <span>
-                  Estación: <strong className="text-white/80 font-normal">{lastPrompt}</strong>
-                </span>
-              </div>
+          {/* Settings & Value-Add Menu Button */}
+          <button
+            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition cursor-pointer ${
+              isSettingsOpen
+                ? 'bg-white/15 border-white/30 text-white'
+                : 'bg-white/5 border-white/10 text-neutral-300 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            {ytmProfile.loggedIn && ytmProfile.avatar ? (
+              <img src={ytmProfile.avatar} alt="" className="w-4 h-4 rounded-full" />
+            ) : (
+              <Settings className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">Configuraciones</span>
+          </button>
 
-              {/* DJ Live Chat Toggle Pill */}
-              <button
-                onClick={() => setIsDjChatOpen(!isDjChatOpen)}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium transition cursor-pointer ${
-                  isDjChatOpen
-                    ? 'bg-aura-accent text-white border-aura-accent shadow-neon'
-                    : 'bg-white/5 hover:bg-white/10 text-aura-subtext hover:text-white border-white/10'
-                }`}
-              >
-                <MessageSquare className="w-3.5 h-3.5 text-aura-neonCyan" />
-                <span>DJ Chat</span>
-              </button>
-
-              {/* User Account / Profile Pill */}
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white transition cursor-pointer"
-                title={userProfile?.loggedIn ? `Conectado como ${userProfile.name}` : 'Ajustes y cuenta'}
-              >
-                {userProfile?.loggedIn && userProfile.avatar ? (
-                  <img
-                    src={userProfile.avatar}
-                    alt={userProfile.name}
-                    className="w-4 h-4 rounded-full object-cover"
-                  />
+          {/* Settings & Extras Popover Menu */}
+          {isSettingsOpen && (
+            <div className="absolute right-0 top-9 w-80 bg-[#161616] border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-4">
+              {/* Account Section */}
+              <div className="pb-3 border-b border-white/10">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
+                  Cuenta de YouTube Music
+                </p>
+                {ytmProfile.loggedIn ? (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {ytmProfile.avatar ? (
+                        <img
+                          src={ytmProfile.avatar}
+                          alt=""
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-xs font-bold">
+                          {ytmProfile.name?.[0] || 'U'}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{ytmProfile.name}</p>
+                        <p className="text-[11px] text-emerald-400 truncate">
+                          {ytmProfile.email || 'Sesión activa en el iframe'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 transition cursor-pointer"
+                      title="Cerrar sesión"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
                 ) : (
-                  <User className="w-3.5 h-3.5 text-aura-subtext" />
+                  <button
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      handleOpenGoogleLogin();
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-white text-black hover:bg-neutral-200 font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>Iniciar sesión en Google / YT Music</span>
+                  </button>
                 )}
-                <span className="max-w-[80px] truncate text-[11px] font-medium">
-                  {userProfile?.loggedIn ? userProfile.name : 'Cuenta'}
-                </span>
-                {userProfile?.loggedIn && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                )}
-              </button>
-            </div>
-          </header>
-
-          {/* Main Body */}
-          <main className="flex-1 flex flex-col overflow-hidden relative">
-            {/* Player View (Kept active in DOM with offscreen positioning when not active to preserve gapless audio engine) */}
-            <div
-              className={`flex-1 flex flex-col overflow-hidden ${
-                activeTab === 'player'
-                  ? 'relative'
-                  : 'absolute -left-[9999px] -top-[9999px] w-full h-full pointer-events-none opacity-0'
-              }`}
-            >
-              {/* Top Prompt & Global Search Area */}
-              <div className="w-full px-6 pt-3 pb-2 z-30 max-w-4xl mx-auto">
-                <PromptBar
-                  onPromptSubmit={handlePromptSubmit}
-                  onPlayDirectSong={handlePlayDirectSong}
-                  onAddSongToQueue={handleAddSongToQueue}
-                  isLoading={isLoadingAi}
-                  aiProgressStep={aiProgressStep}
-                />
               </div>
 
-              {/* Center Area: Now Playing & Queue + DJ Chat Sidebar */}
-              <div className="flex-1 flex overflow-hidden">
-                <NowPlayingView
-                  currentSong={currentSong}
-                  isPlaying={playbackState.isPlaying}
-                  showVideo={showVideo}
-                  onToggleVideo={() => setShowVideo(!showVideo)}
-                  onSmartSkip={handleSmartSkip}
-                  onToggleLike={handleToggleLike}
-                  onToggleWatchLater={handleToggleWatchLater}
-                  onToggleDjChat={() => setIsDjChatOpen(!isDjChatOpen)}
-                  isAiLoading={isLoadingAi}
-                  videoSlot={persistentPlayer}
-                />
+              {/* Audio Equalizer Preset */}
+              <div className="pb-3 border-b border-white/10">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
+                  <Sliders className="w-3.5 h-3.5 text-red-500" />
+                  <span>Ecualizador en Tiempo Real</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { id: 'flat', label: 'Original (Plano)' },
+                    { id: 'bass', label: 'Bass Boost' },
+                    { id: 'vocal', label: 'Claridad Vocal' },
+                    { id: 'warm', label: 'Estudio Cálido' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => applyAudioPreset(item.id as AudioPreset)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between border cursor-pointer transition ${
+                        audioPreset === item.id
+                          ? 'bg-red-600/20 border-red-500 text-white'
+                          : 'bg-white/5 border-white/5 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      {audioPreset === item.id && <Check className="w-3 h-3 text-red-400" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                <QueueList
-                  queue={queue}
-                  onPlaySong={(index) => {
-                    const song = queue[index];
-                    const newQueue = queue.filter((_, i) => i !== index);
-                    if (currentSong) newQueue.unshift(currentSong);
-                    recordPlayedSong(song);
-                    setCurrentSong(song);
-                    setQueue(newQueue);
-                    setPlaybackState((p) => ({ ...p, isPlaying: true, currentTime: 0 }));
-                    // Refresh radio with tracks similar to the selected track!
-                    populateSimilarRadio(song);
-                  }}
-                  onRemoveSong={(index) => {
-                    setQueue((prev) => prev.filter((_, i) => i !== index));
-                  }}
-                  onToggleWatchLater={handleToggleWatchLater}
-                  isLoadingAi={isLoadingAi}
-                />
+              {/* AdBlocker & Shortcuts Info */}
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-neutral-300">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>Bloqueador de anuncios y cortes</span>
+                  </div>
+                  <button
+                    onClick={() => setAutoSkipAds(!autoSkipAds)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold cursor-pointer ${
+                      autoSkipAds
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-white/10 text-neutral-400'
+                    }`}
+                  >
+                    {autoSkipAds ? 'Activo' : 'Pausado'}
+                  </button>
+                </div>
 
-                {/* Interactive Conversational DJ Sidebar */}
-                <AiDjChatSidebar
-                  isOpen={isDjChatOpen}
-                  onClose={() => setIsDjChatOpen(false)}
-                  messages={chatMessages}
-                  onSendMessage={handleSendMessageToDj}
-                  onPlaySong={handlePlayDirectSong}
-                  curationSettings={curationSettings}
-                  onUpdateSettings={setCurationSettings}
-                  isLoading={isLoadingAi}
-                  currentSong={currentSong}
-                />
+                <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 text-[11px] text-neutral-400 flex items-center justify-between">
+                  <span>Atajos físicos de Mac</span>
+                  <span className="font-mono text-white">F7 ⏮ · F8 ⏯ · F9 ⏭</span>
+                </div>
               </div>
             </div>
+          )}
+        </div>
+      </header>
 
-            {/* Explore Hub Tab */}
-            {activeTab === 'explore' && (
-              <ExploreView
-                onPlaySong={handlePlayDirectSong}
-                onAddSongToQueue={handleAddSongToQueue}
-                onToggleLike={handleToggleLike}
-                onToggleWatchLater={handleToggleWatchLater}
-                onAskDjWithVibe={(vibe) => {
-                  setActiveTab('player');
-                  handlePromptSubmit(vibe);
-                }}
-                likedSongIds={likedSongIds}
-                watchLaterSongIds={watchLaterSongIds}
-              />
-            )}
+      {/* 100% Pure, Unmodified YouTube Music Webview / Iframe */}
+      <main className="flex-1 w-full h-full relative bg-[#030303] overflow-hidden">
+        <webview
+          ref={webviewRef}
+          src="https://music.youtube.com"
+          partition="persist:aura-user-session"
+          // @ts-ignore
+          allowpopups="true"
+          style={{ display: 'inline-flex', width: '100%', height: '100%' }}
+          className="absolute inset-0 w-full h-full border-0"
+        />
+      </main>
 
-            {/* Liked Songs Library Tab */}
-            {activeTab === 'liked' && (
-              <LibraryView
-                type="liked"
-                songs={likedSongs}
-                onPlaySong={handlePlayDirectSong}
-                onPlayAll={handlePlayAll}
-                onShuffleAll={handleShuffleAll}
-                onAddSongToQueue={handleAddSongToQueue}
-                onRemoveFromList={(song) => handleToggleLike(song)}
-                onGoToExplore={() => setActiveTab('explore')}
-                onOpenGoogleLogin={() => window.auraAPI?.openGoogleLogin?.()}
-              />
-            )}
-
-            {/* Watch Later Library Tab */}
-            {activeTab === 'watchLater' && (
-              <LibraryView
-                type="watchLater"
-                songs={watchLaterSongs}
-                onPlaySong={handlePlayDirectSong}
-                onPlayAll={handlePlayAll}
-                onShuffleAll={handleShuffleAll}
-                onAddSongToQueue={handleAddSongToQueue}
-                onRemoveFromList={(song) => handleToggleWatchLater(song)}
-                onGoToExplore={() => setActiveTab('explore')}
-                onOpenGoogleLogin={() => window.auraAPI?.openGoogleLogin?.()}
-              />
-            )}
-          </main>
-
-          {/* If video mode is OFF, persistentPlayer is kept mounted in an off-dock position */}
-          {!showVideo && persistentPlayer}
-
-          {/* Bottom Player Controls */}
-          <PlayerControls
-            currentSong={currentSong}
-            playbackState={playbackState}
-            onTogglePlay={handleTogglePlay}
-            onPrevious={handlePrevious}
-            onNext={handleNext}
-            onSeek={(secs) => setSeekTime(secs)}
-            onVolumeChange={(vol) => setPlaybackState((p) => ({ ...p, volume: vol, isMuted: false }))}
-            onToggleMute={() => setPlaybackState((p) => ({ ...p, isMuted: !p.isMuted }))}
-            onToggleShuffle={() => setPlaybackState((p) => ({ ...p, isShuffle: !p.isShuffle }))}
-            onToggleRepeat={() => setPlaybackState((p) => ({ ...p, isRepeat: !p.isRepeat }))}
-            onToggleMiniPlayer={handleToggleMini}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-          />
-        </>
-      )}
-
-      {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      {/* Spotify & Apple Music -> Real YouTube Music Account Importer Modal */}
+      <MusicImporterModal
+        isOpen={isImporterOpen}
+        onClose={() => setIsImporterOpen(false)}
+        ytmLoggedIn={ytmProfile.loggedIn}
+        onOpenGoogleLogin={handleOpenGoogleLogin}
+        onNavigateIframe={navigateIframe}
+        onLikeTrackInWebview={handleLikeTrackInWebview}
+        onCreatePlaylistInWebview={handleCreatePlaylistInWebview}
+      />
     </div>
   );
 };
