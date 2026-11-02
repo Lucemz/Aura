@@ -1,5 +1,9 @@
 const https = require('https');
 const { BrowserWindow, session } = require('electron');
+const {
+  loginSpotifyViaExternalBrowser,
+  loginAppleMusicViaExternalBrowser,
+} = require('./browserAuth.cjs');
 
 const CHROME_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -54,7 +58,18 @@ function httpsGet(url, headers = {}) {
  * Opens Spotify Web Login Popup, captures the Web Player Bearer token automatically,
  * and returns the user's Liked Songs, Playlists, and Saved Albums.
  */
-function connectSpotifyAccount(parentWindow) {
+async function connectSpotifyAccount(parentWindow) {
+  try {
+    const extToken = await loginSpotifyViaExternalBrowser();
+    if (extToken) {
+      spotifyBearerToken = extToken;
+      const library = await fetchSpotifyUserLibrary(spotifyBearerToken);
+      return { ok: true, ...library };
+    }
+  } catch (e) {
+    console.warn('[Spotify Importer] External browser fallback:', e.message);
+  }
+
   return new Promise((resolve) => {
     const sess = session.fromPartition('persist:spotify_import');
     let resolved = false;
@@ -281,7 +296,19 @@ async function getSpotifyPlaylistTracks(playlistId) {
  * Opens Apple Music Web Login Popup, captures Developer Authorization & Media-User-Token,
  * and returns the user's Library Songs, Playlists, and Albums.
  */
-function connectAppleMusicAccount(parentWindow) {
+async function connectAppleMusicAccount(parentWindow) {
+  try {
+    const extTokens = await loginAppleMusicViaExternalBrowser();
+    if (extTokens && extTokens.developerToken && extTokens.musicUserToken) {
+      appleBearerToken = extTokens.developerToken;
+      appleMediaUserToken = extTokens.musicUserToken;
+      const library = await fetchAppleMusicLibrary();
+      return { ok: true, ...library };
+    }
+  } catch (e) {
+    console.warn('[Apple Importer] External browser fallback:', e.message);
+  }
+
   return new Promise((resolve) => {
     const sess = session.fromPartition('persist:apple_import');
     let resolved = false;

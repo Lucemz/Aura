@@ -18,6 +18,10 @@ const {
   getApplePlaylistTracks,
   parseExternalMusicUrl,
 } = require('./musicImporter.cjs');
+const {
+  loginViaExternalBrowser,
+  clearExternalBrowserProfile,
+} = require('./browserAuth.cjs');
 
 // Bypass Chromium's autoplay policy for seamless background/instant playback
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -104,7 +108,15 @@ async function createWindow() {
   mainWindow.webContents.on('did-attach-webview', (_, webviewContents) => {
     webviewContents.setUserAgent(CHROME_UA);
 
-    // If user clicks "Acceder" / Sign In inside YouTube Music webview, handle popup cleanly
+    // Intercept top-level navigation to accounts.google.com when user clicks "Acceder" inside YT Music
+    webviewContents.on('will-navigate', (event, url) => {
+      if (url.includes('accounts.google.com') || url.includes('youtube.com/signin')) {
+        event.preventDefault();
+        openGoogleLoginWindow();
+      }
+    });
+
+    // If user clicks "Acceder" / Sign In and it tries to open a popup, route to external Chrome
     webviewContents.setWindowOpenHandler(({ url }) => {
       if (url.includes('accounts.google.com') || url.includes('youtube.com/signin')) {
         openGoogleLoginWindow();
@@ -113,7 +125,6 @@ async function createWindow() {
       return { action: 'allow' };
     });
 
-    // If webview navigates directly to accounts.google.com, ensure webdriver is hidden
     webviewContents.on('dom-ready', () => {
       webviewContents
         .executeJavaScript(`
@@ -176,74 +187,22 @@ async function createWindow() {
 }
 
 /**
- * Opens official Google / YouTube Music Sign-In Window sharing SESSION_PARTITION
+ * Launches the user's REAL Google Chrome browser to sign into Google / YouTube Music,
+ * captures all session cookies & HttpOnly tokens via CDP, and injects them into Electron's session.
  */
-function openGoogleLoginWindow() {
-  return new Promise((resolve) => {
-    const loginWin = new BrowserWindow({
-      width: 520,
-      height: 680,
-      center: true,
-      parent: mainWindow || undefined,
-      modal: false,
-      title: 'Iniciar sesión en YouTube Music / Google',
-      backgroundColor: '#030303',
-      webPreferences: {
-        partition: SESSION_PARTITION,
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-    });
-
-    loginWin.webContents.setUserAgent(CHROME_UA);
-
-    const targetUrl =
-      'https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Des%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F%26feature%3Dsign_in_button&hl=es';
-
-    loginWin.loadURL(targetUrl);
-
-    loginWin.webContents.on('dom-ready', () => {
-      loginWin.webContents
-        .executeJavaScript(`
-          try {
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-          } catch (e) {}
-        `)
-        .catch(() => {});
-    });
-
-    const checkLogin = async (url) => {
-      if (url.startsWith('https://music.youtube.com')) {
-        if (mainWindow) {
-          mainWindow.webContents.send('auth:success');
-        }
-        setTimeout(() => {
-          if (!loginWin.isDestroyed()) loginWin.close();
-          resolve(true);
-        }, 800);
-        return;
+async function openGoogleLoginWindow() {
+  const sess = session.fromPartition(SESSION_PARTITION);
+  try {
+    const ok = await loginViaExternalBrowser(sess, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('auth:success');
       }
-
-      const sess = session.fromPartition(SESSION_PARTITION);
-      const profile = await getUserProfile(sess);
-      if (profile && profile.loggedIn) {
-        if (mainWindow) {
-          mainWindow.webContents.send('auth:success');
-        }
-        setTimeout(() => {
-          if (!loginWin.isDestroyed()) loginWin.close();
-          resolve(true);
-        }, 800);
-      }
-    };
-
-    loginWin.webContents.on('did-navigate', (_, url) => checkLogin(url));
-    loginWin.webContents.on('did-redirect-navigation', (_, url) => checkLogin(url));
-
-    loginWin.on('closed', () => {
-      resolve(true);
     });
-  });
+    return ok;
+  } catch (err) {
+    console.error('[Aura Main] External browser login error:', err);
+    return false;
+  }
 }
 
 // ============================================================================
@@ -268,6 +227,7 @@ ipcMain.handle('auth:open-google-login', async () => {
 ipcMain.handle('auth:logout', async () => {
   const sess = session.fromPartition(SESSION_PARTITION);
   await sess.clearStorageData();
+  clearExternalBrowserProfile();
   if (mainWindow) {
     mainWindow.webContents.send('auth:success');
   }

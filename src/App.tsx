@@ -48,11 +48,15 @@ export const App: React.FC = () => {
     if (window.auraAPI?.onAuthSuccess) {
       return window.auraAPI.onAuthSuccess(() => {
         checkAuthStatus();
-        // Reload YouTube Music iframe so the logged-in account appears immediately
+        // Reload YouTube Music iframe to home so the logged-in account appears immediately
         if (webviewRef.current) {
           try {
-            webviewRef.current.reload();
-          } catch (e) {}
+            webviewRef.current.loadURL('https://music.youtube.com/');
+          } catch (e) {
+            try {
+              webviewRef.current.reload();
+            } catch (err2) {}
+          }
         }
       });
     }
@@ -419,6 +423,18 @@ export const App: React.FC = () => {
           className="flex items-center gap-2 relative"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
+          {/* Quick External Browser Login Button when not signed in */}
+          {!ytmProfile.loggedIn && (
+            <button
+              onClick={handleOpenGoogleLogin}
+              className="px-3 py-1 rounded-lg bg-white text-black hover:bg-neutral-200 text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              title="Se abrirá tu navegador Google Chrome real para iniciar sesión de forma segura y sincronizar el token automáticamente"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Iniciar Sesión (vía Chrome)</span>
+            </button>
+          )}
+
           {/* Primary Value-Add Button: Spotify & Apple Music Importer */}
           <button
             onClick={() => setIsImporterOpen(true)}
