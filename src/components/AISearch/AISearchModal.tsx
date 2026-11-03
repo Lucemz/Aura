@@ -54,6 +54,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
   const handlePlay = (song: AISongRecommendation) => {
     setActiveVideoId(song.videoId);
     onPlayTrack(song.videoId);
+    onClose();
   };
 
   const handleLike = async (e: React.MouseEvent, videoId: string) => {
