@@ -30,6 +30,10 @@
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Aura utiliza Bluetooth para conectar tus AirPods con Audio Espacial y llaves de seguridad.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Aura necesita permiso para leer tus playlists y canciones de la app Música de tu Mac.</string>
+    <key>NSAppleMusicUsageDescription</key>
+    <string>Aura necesita permiso para importar tus canciones y playlists desde Apple Music.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

@@ -23,6 +23,7 @@ swiftc -O \
   macos/Sources/WebEngine/YouTubeEnhancerScripts.swift \
   macos/Sources/Services/GoogleAuthService.swift \
   macos/Sources/Services/SpotifyService.swift \
+  macos/Sources/Services/AppleMusicService.swift \
   macos/Sources/Services/YouTubeMusicService.swift \
   macos/Sources/Services/AISearchService.swift \
   macos/Sources/UI/MainWindowController.swift \

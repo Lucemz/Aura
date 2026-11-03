@@ -8,6 +8,7 @@ import {
 } from '../../types';
 import { TransferProgressView } from './TransferProgressView';
 import { SpotifyLibraryView } from './SpotifyLibraryView';
+import { AppleMusicLibraryView } from './AppleMusicLibraryView';
 import { SpotifyUrlImporterView } from './SpotifyUrlImporterView';
 
 interface MusicImporterModalProps {
@@ -33,10 +34,11 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   onLikeTrackInWebview,
   onCreatePlaylistInWebview,
 }) => {
-  const [sourceTab, setSourceTab] = useState<'spotify' | 'url'>('spotify');
+  const [sourceTab, setSourceTab] = useState<'spotify' | 'apple' | 'url'>('spotify');
 
-  // Spotify Library State
+  // Spotify & Apple Music Library State
   const [spotifyData, setSpotifyData] = useState<ProviderLibraryResult | null>(null);
+  const [appleData, setAppleData] = useState<ProviderLibraryResult | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -97,6 +99,24 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       }
     } catch (err: any) {
       setStatusError(err.message || 'Error al autorizar con Spotify.');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleConnectAppleMusic = async () => {
+    setStatusError(null);
+    setIsConnecting(true);
+    try {
+      const res = await window.auraAPI?.connectAppleMusic();
+      if (res && res.ok) {
+        setAppleData(res);
+        setSelectedTrackIndices(new Set((res.likedSongs || []).map((_, idx) => idx)));
+      } else {
+        setStatusError(res?.error || 'No se pudo leer la app Música de tu Mac.');
+      }
+    } catch (err: any) {
+      setStatusError(err.message || 'Error al conectar con la app Música de tu Mac.');
     } finally {
       setIsConnecting(false);
     }
@@ -261,7 +281,10 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     setStatusError(null);
     setIsConnecting(true);
     try {
-      const tracks = await window.auraAPI?.getSpotifyPlaylistTracks(pl.id);
+      const tracks =
+        pl.provider === 'apple'
+          ? await window.auraAPI?.getApplePlaylistTracks(pl.id)
+          : await window.auraAPI?.getSpotifyPlaylistTracks(pl.id);
       setIsConnecting(false);
       if (tracks && tracks.length > 0) {
         await startTransfer(tracks, destination, pl.title);
@@ -291,11 +314,11 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                Importar de Spotify a YouTube Music
+                Importar de Spotify o Apple Music a YouTube Music
               </h2>
               <p className="text-xs text-neutral-400">
-                Autoriza el acceso a tu cuenta de Spotify (OAuth 2.0) para transferir tus &ldquo;Me
-                gusta&rdquo; y Playlists directamente a tu cuenta de YouTube Music
+                Transfiere tus canciones favoritas y Playlists desde Spotify o desde la app nativa
+                Música de tu Mac hacia YouTube Music
               </p>
             </div>
           </div>
@@ -348,6 +371,11 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 onClick={() => {
                   setSourceTab('spotify');
                   setStatusError(null);
+                  if (spotifyData) {
+                    setSelectedTrackIndices(
+                      new Set((spotifyData.likedSongs || []).map((_, idx) => idx))
+                    );
+                  }
                 }}
                 className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
                   sourceTab === 'spotify'
@@ -356,7 +384,29 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 }`}
               >
                 <Music className="w-4 h-4" />
-                <span>Autorizar Cuenta de Spotify (OAuth)</span>
+                <span>Spotify (OAuth)</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSourceTab('apple');
+                  setStatusError(null);
+                  if (appleData) {
+                    setSelectedTrackIndices(
+                      new Set((appleData.likedSongs || []).map((_, idx) => idx))
+                    );
+                  } else {
+                    handleConnectAppleMusic();
+                  }
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  sourceTab === 'apple'
+                    ? 'border-[#FA243C] text-[#FA243C] bg-[#FA243C]/10 rounded-t-lg'
+                    : 'border-transparent text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Music className="w-4 h-4" />
+                <span>Apple Music (App Música Mac)</span>
               </button>
 
               <button
@@ -371,7 +421,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 }`}
               >
                 <Link2 className="w-4 h-4" />
-                <span>Pegar Link de Playlist / Álbum de Spotify</span>
+                <span>Pegar Link de Playlist</span>
               </button>
             </div>
 
@@ -389,6 +439,19 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                   isConnecting={isConnecting}
                   selectedTrackIndices={selectedTrackIndices}
                   onConnectSpotify={handleConnectSpotify}
+                  onToggleTrackSelection={toggleTrackSelection}
+                  onToggleSelectAllTracks={toggleSelectAllTracks}
+                  onStartTransfer={startTransfer}
+                  onTransferSelectedPlaylist={handleTransferSelectedPlaylist}
+                />
+              </div>
+            ) : sourceTab === 'apple' ? (
+              <div className="flex-1 flex flex-col overflow-hidden p-6">
+                <AppleMusicLibraryView
+                  appleData={appleData}
+                  isConnecting={isConnecting}
+                  selectedTrackIndices={selectedTrackIndices}
+                  onConnectAppleMusic={handleConnectAppleMusic}
                   onToggleTrackSelection={toggleTrackSelection}
                   onToggleSelectAllTracks={toggleSelectAllTracks}
                   onStartTransfer={startTransfer}

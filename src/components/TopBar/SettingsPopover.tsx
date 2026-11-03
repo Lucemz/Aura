@@ -126,7 +126,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
           className="w-full py-2 px-3 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          <span>Importar canciones desde Spotify</span>
+          <span>Importar de Spotify / Apple Music</span>
         </button>
       </div>
 

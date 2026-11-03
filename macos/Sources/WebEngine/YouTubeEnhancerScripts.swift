@@ -269,8 +269,8 @@ enum YouTubeEnhancerScripts {
         connectSpotify: (forceReauth = false) => callNative('connectSpotify', { forceReauth }),
         getCachedSpotify: () => callNative('getCachedSpotify'),
         getSpotifyPlaylistTracks: (playlistId) => callNative('getSpotifyPlaylistTracks', { playlistId }),
-        connectAppleMusic: () => Promise.resolve({ ok: false, likedSongs: [], playlists: [], albums: [] }),
-        getApplePlaylistTracks: () => Promise.resolve([]),
+        connectAppleMusic: () => callNative('connectAppleMusic'),
+        getApplePlaylistTracks: (playlistId) => callNative('getApplePlaylistTracks', { playlistId }),
         parseExternalMusicUrl: (url) => callNative('parseExternalMusicUrl', { url }),
 
         searchYouTubeMusicTrack: (title, artist) => callNative('searchYouTubeMusicTrack', { title, artist }),

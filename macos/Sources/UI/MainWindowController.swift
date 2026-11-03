@@ -350,6 +350,13 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 let plId = (args["playlistId"] as? String) ?? ""
                 responseObj = await SpotifyService.shared.fetchPlaylistTracks(playlistId: plId)
 
+            case "connectAppleMusic":
+                responseObj = await AppleMusicService.shared.fetchLibrary()
+
+            case "getApplePlaylistTracks":
+                let plId = (args["playlistId"] as? String) ?? ""
+                responseObj = await AppleMusicService.shared.fetchPlaylistTracks(playlistId: plId)
+
             case "parseExternalMusicUrl":
                 let rawUrl = (args["url"] as? String) ?? ""
                 if let range = rawUrl.range(of: "playlist/([a-zA-Z0-9]+)", options: .regularExpression) {
