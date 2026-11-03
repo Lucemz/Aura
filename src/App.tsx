@@ -7,6 +7,7 @@ import {
   createPlaylistInYouTubeMusic,
 } from './services/ytmBridgeService';
 import { TopNavigationBar } from './components/TopBar/TopNavigationBar';
+import { PlayerThemeMode } from './components/TopBar/SettingsPopover';
 import { MusicImporterModal } from './components/Importer/MusicImporterModal';
 import { AISearchModal } from './components/AISearch/AISearchModal';
 
@@ -20,6 +21,9 @@ export const App: React.FC = () => {
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
   const [audioPreset, setAudioPreset] = useState<AudioPreset>('flat');
   const [autoSkipAds, setAutoSkipAds] = useState(true);
+  const [themeMode, setThemeMode] = useState<PlayerThemeMode>(
+    () => (localStorage.getItem('__aura_ui_theme_mode') as PlayerThemeMode) || 'dynamic'
+  );
 
   const isSafari = Boolean(window.auraAPI?.isSafariEngine);
 
@@ -107,6 +111,17 @@ export const App: React.FC = () => {
     applyEqualizerPresetInYTM(preset, webviewRef.current);
   };
 
+  const handleSelectThemeMode = (mode: PlayerThemeMode) => {
+    setThemeMode(mode);
+    try {
+      localStorage.setItem('__aura_ui_theme_mode', mode);
+    } catch {}
+    evalInYouTubeMusic(
+      `window.__auraSetThemeMode && window.__auraSetThemeMode(${JSON.stringify(mode)});`,
+      webviewRef.current
+    ).catch(() => {});
+  };
+
   const handleLikeTrack = useCallback(async (videoId: string): Promise<boolean> => {
     return await likeTrackInYouTubeMusic(videoId, webviewRef.current);
   }, []);
@@ -186,6 +201,8 @@ export const App: React.FC = () => {
         isSettingsOpen={isSettingsOpen}
         audioPreset={audioPreset}
         autoSkipAds={autoSkipAds}
+        themeMode={themeMode}
+        onSelectThemeMode={handleSelectThemeMode}
         onGoBack={() =>
           window.auraAPI?.webviewGoBack
             ? window.auraAPI.webviewGoBack()

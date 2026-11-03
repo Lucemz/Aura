@@ -5,15 +5,14 @@ import {
   RotateCw,
   Home,
   Heart,
-  RefreshCw,
   Settings,
   Minimize2,
   Maximize2,
   LogIn,
-  Sparkles,
 } from 'lucide-react';
 import { AudioPreset, UserProfile } from '../../types';
-import { SettingsPopover } from './SettingsPopover';
+import { SettingsPopover, PlayerThemeMode } from './SettingsPopover';
+import { AISearchIcon } from '../AISearch/AISearchIcon';
 
 interface TopNavigationBarProps {
   ytmProfile: UserProfile;
@@ -21,6 +20,8 @@ interface TopNavigationBarProps {
   isSettingsOpen: boolean;
   audioPreset: AudioPreset;
   autoSkipAds: boolean;
+  themeMode: PlayerThemeMode;
+  onSelectThemeMode: (mode: PlayerThemeMode) => void;
   onGoBack: () => void;
   onGoForward: () => void;
   onReload: () => void;
@@ -41,6 +42,8 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
   isSettingsOpen,
   audioPreset,
   autoSkipAds,
+  themeMode,
+  onSelectThemeMode,
   onGoBack,
   onGoForward,
   onReload,
@@ -106,7 +109,7 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
         </button>
       </div>
 
-      {/* Right Value-Added Controls: Music Importer, EQ, MiniPlayer & Settings */}
+      {/* Right Value-Added Controls: AI Search (Magnifying Glass + AI), MiniPlayer & Settings */}
       <div
         className="flex items-center gap-2 relative"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -124,19 +127,11 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
 
         <button
           onClick={onOpenAISearch}
-          className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-          title="Recomendar música según lo que estás haciendo"
+          className="px-3 py-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.14] border border-white/15 text-white text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+          title="Búsqueda inteligente por momento o atmósfera"
         >
-          <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+          <AISearchIcon className="w-4 h-4 text-violet-400" />
           <span>Aura AI</span>
-        </button>
-
-        <button
-          onClick={onOpenImporter}
-          className="px-3 py-1 rounded-lg bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Importar desde Spotify</span>
         </button>
 
         <button
@@ -172,11 +167,17 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
             ytmProfile={ytmProfile}
             audioPreset={audioPreset}
             autoSkipAds={autoSkipAds}
+            themeMode={themeMode}
+            onSelectThemeMode={onSelectThemeMode}
             onOpenGoogleLogin={() => {
               onToggleSettings();
               onOpenGoogleLogin();
             }}
             onLogout={onLogout}
+            onOpenImporter={() => {
+              onToggleSettings();
+              onOpenImporter();
+            }}
             onSelectPreset={onSelectPreset}
             onToggleAutoSkipAds={onToggleAutoSkipAds}
           />
