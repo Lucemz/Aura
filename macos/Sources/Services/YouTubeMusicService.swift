@@ -75,31 +75,61 @@ final class YouTubeMusicService {
         return nil
     }
 
-    /// Plays a YouTube Music track immediately by `videoId` inside the SPA without full page reload
+    /// Plays a YouTube Music track immediately by `videoId` inside the `WKWebView`
     func playVideo(in webView: WKWebView, videoId: String) async -> Bool {
         let safeId = videoId.replacingOccurrences(of: "\"", with: "")
             .replacingOccurrences(of: "'", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !safeId.isEmpty else { return false }
+
         let playJS = """
-        (function() {
+        (async function() {
+          const vid = "\(safeId)";
           try {
-            const vid = "\(safeId)";
+            // 1. Try YouTube Music Polymer native navigation command
             const app = document.querySelector('ytmusic-app');
-            if (app && typeof app.navigate === 'function') {
-              app.navigate({ watchEndpoint: { videoId: vid } });
-              return true;
+            if (app) {
+              if (typeof app.navigate === 'function') {
+                app.navigate({ watchEndpoint: { videoId: vid } });
+              }
+              app.dispatchEvent(new CustomEvent('yt-navigate', {
+                bubbles: true,
+                composed: true,
+                detail: { endpoint: { watchEndpoint: { videoId: vid } } }
+              }));
+              app.dispatchEvent(new CustomEvent('yt-action', {
+                bubbles: true,
+                composed: true,
+                detail: {
+                  actionName: 'yt-navigate',
+                  args: [{ watchEndpoint: { videoId: vid } }]
+                }
+              }));
             }
-            const a = document.createElement('a');
-            a.className = 'yt-simple-endpoint';
-            a.href = 'watch?v=' + vid;
-            a.data = { watchEndpoint: { videoId: vid } };
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            return true;
-          } catch (e) {
-            window.location.href = 'https://music.youtube.com/watch?v=\(safeId)';
-            return true;
-          }
+
+            // 2. Also try movie_player API if a player instance is already active
+            const mp = document.getElementById('movie_player');
+            if (mp && typeof mp.loadVideoById === 'function') {
+              mp.loadVideoById(vid);
+              if (typeof mp.playVideo === 'function') mp.playVideo();
+            }
+
+            // Wait briefly and check if the active video matches vid
+            await new Promise(r => setTimeout(r, 250));
+            const currentVid = mp && typeof mp.getVideoData === 'function'
+              ? (mp.getVideoData() && mp.getVideoData().video_id)
+              : null;
+
+            if (currentVid === vid) {
+              const v = document.querySelector('video');
+              if (v && v.paused) v.play().catch(() => {});
+              return 'spa-ok';
+            }
+          } catch (e) {}
+
+          // 3. Guaranteed fallback: navigate directly to the YouTube Music watch URL
+          window.location.href = 'https://music.youtube.com/watch?v=' + vid;
+          return 'nav-fallback';
         })()
         """
         _ = await evaluateInWebView(webView, js: playJS)

@@ -68,7 +68,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/45 backdrop-blur-md flex items-start justify-center pt-14 p-4"
+      className="fixed inset-0 z-50 bg-black/20 flex items-start justify-center pt-14 p-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}

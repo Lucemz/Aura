@@ -28,6 +28,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         mainWindow.center()
 
         guard let contentView = mainWindow.contentView else { return }
+        contentView.wantsLayer = true
 
         // 1. Configure Native Safari WKWebView for YouTube Music (Spatial Audio via AVFoundation)
         let ytmConfig = WKWebViewConfiguration()
@@ -66,6 +67,9 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         uiWebView = WKWebView(frame: .zero, configuration: uiConfig)
         uiWebView.customUserAgent = AppConfig.safariUserAgent
         uiWebView.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 12.0, *) {
+            uiWebView.underPageBackgroundColor = .clear
+        }
         contentView.addSubview(uiWebView)
 
         layoutWebViews()
@@ -129,6 +133,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
 
     private func layoutWebViews() {
         guard let contentView = mainWindow.contentView else { return }
+        contentView.wantsLayer = true
         let bounds = contentView.bounds
         let topBarHeight: CGFloat = 40.0
 
@@ -258,6 +263,10 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
             if overlayExpanded != expanded {
                 overlayExpanded = expanded
                 layoutWebViews()
+                let blurJS = expanded
+                    ? "document.body.style.transition = 'filter 0.18s ease'; document.body.style.filter = 'blur(8px) brightness(0.6)';"
+                    : "document.body.style.filter = 'none';"
+                ytmWebView.evaluateJavaScript(blurJS, completionHandler: nil)
             }
             return
         case "startWindowDrag":
