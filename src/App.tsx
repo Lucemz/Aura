@@ -8,12 +8,14 @@ import {
 } from './services/ytmBridgeService';
 import { TopNavigationBar } from './components/TopBar/TopNavigationBar';
 import { MusicImporterModal } from './components/Importer/MusicImporterModal';
+import { AISearchModal } from './components/AISearch/AISearchModal';
 
 export const App: React.FC = () => {
   const webviewRef = useRef<any>(null);
 
   const [ytmProfile, setYtmProfile] = useState<UserProfile>({ loggedIn: false });
   const [isImporterOpen, setIsImporterOpen] = useState(false);
+  const [isAISearchOpen, setIsAISearchOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
   const [audioPreset, setAudioPreset] = useState<AudioPreset>('flat');
@@ -23,8 +25,8 @@ export const App: React.FC = () => {
 
   // Notify native macOS WKWebView host when a modal/popover is open so overlay expands/shrinks
   useEffect(() => {
-    window.auraAPI?.setOverlayExpanded?.(isImporterOpen || isSettingsOpen);
-  }, [isImporterOpen, isSettingsOpen]);
+    window.auraAPI?.setOverlayExpanded?.(isImporterOpen || isSettingsOpen || isAISearchOpen);
+  }, [isImporterOpen, isSettingsOpen, isAISearchOpen]);
 
   const checkAuthStatus = useCallback(async () => {
     if (window.auraAPI?.getUserProfile) {
@@ -107,6 +109,14 @@ export const App: React.FC = () => {
 
   const handleLikeTrack = useCallback(async (videoId: string): Promise<boolean> => {
     return await likeTrackInYouTubeMusic(videoId, webviewRef.current);
+  }, []);
+
+  const handlePlayTrack = useCallback((videoId: string) => {
+    if (window.auraAPI?.playYouTubeMusicVideo) {
+      window.auraAPI.playYouTubeMusicVideo(videoId);
+      return;
+    }
+    navigateIframe(`https://music.youtube.com/watch?v=${videoId}`);
   }, []);
 
   const handleCreatePlaylist = useCallback(
@@ -194,7 +204,14 @@ export const App: React.FC = () => {
         onNavigate={navigateIframe}
         onOpenGoogleLogin={handleOpenGoogleLogin}
         onLogout={handleLogout}
-        onOpenImporter={() => setIsImporterOpen(true)}
+        onOpenAISearch={() => {
+          setIsSettingsOpen(false);
+          setIsAISearchOpen(true);
+        }}
+        onOpenImporter={() => {
+          setIsSettingsOpen(false);
+          setIsImporterOpen(true);
+        }}
         onToggleMini={handleToggleMini}
         onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)}
         onSelectPreset={handleSelectPreset}
@@ -221,6 +238,13 @@ export const App: React.FC = () => {
           />
         </main>
       )}
+
+      <AISearchModal
+        isOpen={isAISearchOpen}
+        onClose={() => setIsAISearchOpen(false)}
+        onPlayTrack={handlePlayTrack}
+        onLikeTrack={handleLikeTrack}
+      />
 
       <MusicImporterModal
         isOpen={isImporterOpen}

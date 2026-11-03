@@ -24,6 +24,7 @@ swiftc -O \
   macos/Sources/Services/GoogleAuthService.swift \
   macos/Sources/Services/SpotifyService.swift \
   macos/Sources/Services/YouTubeMusicService.swift \
+  macos/Sources/Services/AISearchService.swift \
   macos/Sources/UI/MainWindowController.swift \
   macos/Sources/App/AppDelegate.swift \
   macos/Sources/App/main.swift \

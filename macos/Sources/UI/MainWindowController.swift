@@ -372,6 +372,25 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                     responseObj = match
                 }
 
+            case "playYouTubeMusicVideo":
+                let videoId = (args["videoId"] as? String) ?? ""
+                if !videoId.isEmpty {
+                    responseObj = await YouTubeMusicService.shared.playVideo(in: ytmWebView, videoId: videoId)
+                } else {
+                    responseObj = false
+                }
+
+            case "aiRecommendSongs":
+                let prompt = (args["prompt"] as? String) ?? ""
+                responseObj = await AISearchService.shared.recommendSongs(prompt: prompt, in: ytmWebView)
+
+            case "getAiApiKey":
+                responseObj = AISearchService.shared.getGeminiApiKey()
+
+            case "setAiApiKey":
+                let key = (args["apiKey"] as? String) ?? ""
+                responseObj = AISearchService.shared.setGeminiApiKey(key)
+
             case "toggleMiniPlayer":
                 if !isMiniPlayer {
                     previousFrame = mainWindow.frame

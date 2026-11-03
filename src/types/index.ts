@@ -57,6 +57,21 @@ export interface TransferLogItem {
   error?: string;
 }
 
+export interface AISongRecommendation {
+  videoId: string;
+  title: string;
+  artist: string;
+  reason: string;
+  thumbnail: string;
+}
+
+export interface AISearchResponse {
+  ok: boolean;
+  provider?: string;
+  error?: string;
+  songs: AISongRecommendation[];
+}
+
 declare global {
   interface Window {
     auraAPI?: {
@@ -89,6 +104,10 @@ declare global {
         artist: string;
         thumbnail: string;
       } | null>;
+      playYouTubeMusicVideo?: (videoId: string) => Promise<boolean>;
+      aiRecommendSongs?: (prompt: string) => Promise<AISearchResponse>;
+      getAiApiKey?: () => Promise<string>;
+      setAiApiKey?: (apiKey: string) => Promise<boolean>;
       likeSongOnYouTubeMusic: (videoId: string) => Promise<{ ok: boolean; error?: string }>;
       createPlaylistOnYouTubeMusic: (
         title: string,

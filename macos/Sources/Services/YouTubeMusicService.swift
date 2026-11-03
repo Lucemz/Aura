@@ -74,4 +74,35 @@ final class YouTubeMusicService {
         }
         return nil
     }
+
+    /// Plays a YouTube Music track immediately by `videoId` inside the SPA without full page reload
+    func playVideo(in webView: WKWebView, videoId: String) async -> Bool {
+        let safeId = videoId.replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "'", with: "")
+        let playJS = """
+        (function() {
+          try {
+            const vid = "\(safeId)";
+            const app = document.querySelector('ytmusic-app');
+            if (app && typeof app.navigate === 'function') {
+              app.navigate({ watchEndpoint: { videoId: vid } });
+              return true;
+            }
+            const a = document.createElement('a');
+            a.className = 'yt-simple-endpoint';
+            a.href = 'watch?v=' + vid;
+            a.data = { watchEndpoint: { videoId: vid } };
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return true;
+          } catch (e) {
+            window.location.href = 'https://music.youtube.com/watch?v=\(safeId)';
+            return true;
+          }
+        })()
+        """
+        _ = await evaluateInWebView(webView, js: playJS)
+        return true
+    }
 }

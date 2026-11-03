@@ -48,4 +48,8 @@ enum AppConfig {
     static var chromeAuthProfileDirectory: URL {
         appSupportDirectory.appendingPathComponent("chrome-auth-profile", isDirectory: true)
     }
+
+    static var settingsFileURL: URL {
+        appSupportDirectory.appendingPathComponent("aura-settings.json")
+    }
 }

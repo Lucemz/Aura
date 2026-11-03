@@ -15,7 +15,7 @@ enum YouTubeEnhancerScripts {
         localStorage.removeItem('yt-player-quality');
       } catch (e) {}
 
-      // Background Eco-Mode CSS (pauses decorative animations when window is hidden/unfocused)
+      // Background Eco-Mode CSS + Zero-Overhead Static Aura Branding & Accent Colors
       try {
         const style = document.createElement('style');
         style.textContent = `
@@ -24,6 +24,58 @@ enum YouTubeEnhancerScripts {
           html.__aura-eco-bg *::after {
             animation-play-state: paused !important;
             transition: none !important;
+          }
+
+          /* Hide original YouTube Music SVG inside ytmusic-logo and show Aura branding */
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint picture,
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint yt-icon,
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint svg,
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint img:not(.__aura-logo-img) {
+            display: none !important;
+          }
+
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            text-decoration: none !important;
+          }
+
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint::before {
+            content: '';
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border-radius: 7px;
+            background: linear-gradient(135deg, #10b981 0%, #6366f1 100%);
+            box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.25);
+            flex-shrink: 0;
+          }
+
+          ytmusic-nav-bar ytmusic-logo a.yt-simple-endpoint::after {
+            content: 'Aura';
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #ffffff;
+          }
+
+          /* Static Aura Accent Palette (0% GPU/CPU cost: pure flat color variables) */
+          #progress-bar.ytmusic-player-bar {
+            --paper-slider-active-color: #10b981 !important;
+            --paper-slider-knob-color: #10b981 !important;
+            --paper-slider-knob-start-color: #10b981 !important;
+            --paper-slider-knob-start-border-color: #10b981 !important;
+          }
+
+          ytmusic-guide-entry-renderer[active] tp-yt-paper-item {
+            background-color: rgba(16, 185, 129, 0.14) !important;
+          }
+
+          ytmusic-guide-entry-renderer[active] .title.ytmusic-guide-entry-renderer,
+          ytmusic-guide-entry-renderer[active] yt-icon.guide-icon {
+            color: #10b981 !important;
           }
         `;
         document.head.appendChild(style);
@@ -114,6 +166,10 @@ enum YouTubeEnhancerScripts {
         parseExternalMusicUrl: (url) => callNative('parseExternalMusicUrl', { url }),
 
         searchYouTubeMusicTrack: (title, artist) => callNative('searchYouTubeMusicTrack', { title, artist }),
+        playYouTubeMusicVideo: (videoId) => callNative('playYouTubeMusicVideo', { videoId }),
+        aiRecommendSongs: (prompt) => callNative('aiRecommendSongs', { prompt }),
+        getAiApiKey: () => callNative('getAiApiKey'),
+        setAiApiKey: (apiKey) => callNative('setAiApiKey', { apiKey }),
         likeSongOnYouTubeMusic: (videoId) => callNative('likeSongOnYouTubeMusic', { videoId }),
         createPlaylistOnYouTubeMusic: (title, description, videoIds = []) =>
           callNative('createPlaylistOnYouTubeMusic', { title, description, videoIds }),

@@ -10,6 +10,7 @@ import {
   Minimize2,
   Maximize2,
   LogIn,
+  Sparkles,
 } from 'lucide-react';
 import { AudioPreset, UserProfile } from '../../types';
 import { SettingsPopover } from './SettingsPopover';
@@ -26,6 +27,7 @@ interface TopNavigationBarProps {
   onNavigate: (url: string) => void;
   onOpenGoogleLogin: () => void;
   onLogout: () => void;
+  onOpenAISearch: () => void;
   onOpenImporter: () => void;
   onToggleMini: () => void;
   onToggleSettings: () => void;
@@ -45,6 +47,7 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
   onNavigate,
   onOpenGoogleLogin,
   onLogout,
+  onOpenAISearch,
   onOpenImporter,
   onToggleMini,
   onToggleSettings,
@@ -118,6 +121,15 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
             <span>Iniciar Sesión</span>
           </button>
         )}
+
+        <button
+          onClick={onOpenAISearch}
+          className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+          title="Recomendar música según lo que estás haciendo"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Aura AI</span>
+        </button>
 
         <button
           onClick={onOpenImporter}
