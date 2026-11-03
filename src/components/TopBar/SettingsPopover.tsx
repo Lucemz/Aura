@@ -10,6 +10,7 @@ import {
   Palette,
   Globe,
   Cpu,
+  Activity,
 } from 'lucide-react';
 import { AudioPreset, UserProfile, AIModelId, AIStatusInfo } from '../../types';
 import { AISearchIcon } from '../AISearch/AISearchIcon';
@@ -30,13 +31,12 @@ interface SettingsPopoverProps {
   onToggleAutoSkipAds: () => void;
 }
 
-const AI_MODEL_OPTIONS: { id: AIModelId; label: string; hint: string }[] = [
-  { id: 'free-default', label: 'GPT-OSS 20B (Free Keyless)', hint: '100 req/day' },
-  { id: 'gemini-2.5-flash', label: 'Google Gemini 2.5 Flash', hint: '500 req/day' },
-  { id: 'gemini-2.5-pro', label: 'Google Gemini 2.5 Pro', hint: '100 req/day' },
-  { id: 'gpt-4o-mini', label: 'OpenAI GPT-4o mini', hint: '500 req/day' },
-  { id: 'llama-3.3-70b', label: 'Groq Llama 3.3 70B', hint: '1,000 req/day' },
-];
+function formatTokenCount(n?: number): string {
+  if (!n || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1_000)}K`;
+  return n.toLocaleString();
+}
 
 export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   ytmProfile,
@@ -51,9 +51,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   onToggleAutoSkipAds,
 }) => {
   const { t, preference, setPreference } = useI18n();
-  const [selectedModel, setSelectedModel] = useState<AIModelId>('free-default');
+  const [selectedModel, setSelectedModel] = useState<AIModelId>('openai-fast');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [aiStatus, setAiStatus] = useState<AIStatusInfo | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
   const presetOptions: { id: AudioPreset; label: string }[] = [
@@ -84,13 +85,17 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
 
   useEffect(() => {
     if (window.auraAPI?.getAiStatus) {
-      window.auraAPI.getAiStatus().then((st) => {
-        if (st) {
-          setAiStatus(st);
-          setSelectedModel(st.selectedModel || 'free-default');
-          setApiKeyInput(st.apiKey || '');
-        }
-      });
+      setLoadingModels(true);
+      window.auraAPI
+        .getAiStatus()
+        .then((st) => {
+          if (st) {
+            setAiStatus(st);
+            setSelectedModel(st.selectedModel || 'openai-fast');
+            setApiKeyInput(st.apiKey || '');
+          }
+        })
+        .finally(() => setLoadingModels(false));
     } else if (window.auraAPI?.getAiApiKey) {
       window.auraAPI.getAiApiKey().then((key) => {
         if (key) setApiKeyInput(key);
@@ -100,47 +105,69 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
 
   const persistAiSettings = async (nextModel: AIModelId, nextKey: string) => {
     const trimmed = nextKey.trim();
-    if (window.auraAPI?.saveAiConfig) {
-      const updated = await window.auraAPI.saveAiConfig(nextModel, trimmed);
-      if (updated) {
-        setAiStatus(updated);
-        setSelectedModel(updated.selectedModel);
+    setLoadingModels(true);
+    try {
+      if (window.auraAPI?.saveAiConfig) {
+        const updated = await window.auraAPI.saveAiConfig(nextModel, trimmed);
+        if (updated) {
+          setAiStatus(updated);
+          setSelectedModel(updated.selectedModel);
+        }
+      } else if (window.auraAPI?.setAiApiKey) {
+        await window.auraAPI.setAiApiKey(trimmed);
       }
-    } else if (window.auraAPI?.setAiApiKey) {
-      await window.auraAPI.setAiApiKey(trimmed);
+      setSavedNotice(true);
+      setTimeout(() => setSavedNotice(false), 1600);
+    } finally {
+      setLoadingModels(false);
     }
-    setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 1600);
   };
 
   const handleModelChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nextModel = e.target.value as AIModelId;
+    const nextModel = e.target.value;
     setSelectedModel(nextModel);
     await persistAiSettings(nextModel, apiKeyInput);
   };
 
   const handleSaveApiKey = async () => {
     const trimmed = apiKeyInput.trim();
-    let targetModel = selectedModel;
-    if (!trimmed) {
-      targetModel = 'free-default';
-    } else if (trimmed.startsWith('AIza') && !targetModel.startsWith('gemini-')) {
-      targetModel = 'gemini-2.5-flash';
-    } else if (trimmed.startsWith('gsk_')) {
-      targetModel = 'llama-3.3-70b';
-    } else if (trimmed.startsWith('sk-')) {
-      targetModel = 'gpt-4o-mini';
-    }
-    setSelectedModel(targetModel);
-    await persistAiSettings(targetModel, trimmed);
+    await persistAiSettings(selectedModel, trimmed);
   };
 
-  const dailyLimit = aiStatus?.dailyQuotaLimit || 100;
-  const remainingQuota = aiStatus?.remainingQuota ?? dailyLimit;
-  const quotaPercent = Math.min(100, Math.max(0, Math.round((remainingQuota / dailyLimit) * 100)));
+  const availableModels = aiStatus?.availableModels?.length
+    ? aiStatus.availableModels
+    : [
+        {
+          id: selectedModel || 'openai-fast',
+          displayName: aiStatus?.activeModelName || 'GPT-OSS 20B (Free Keyless)',
+          provider: aiStatus?.provider || 'pollinations',
+          inputTokenLimit: aiStatus?.inputTokenLimit || 32768,
+          outputTokenLimit: aiStatus?.outputTokenLimit || 4096,
+          supportsThinking: true,
+        },
+      ];
+
+  const lastTel = aiStatus?.lastTelemetry;
+  const hasHeaderRateLimit =
+    typeof lastTel?.rateLimitRemainingRequests === 'number' &&
+    typeof lastTel?.rateLimitLimitRequests === 'number' &&
+    lastTel.rateLimitLimitRequests > 0;
+
+  const headerReqPercent = hasHeaderRateLimit
+    ? Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round(
+            ((lastTel!.rateLimitRemainingRequests || 0) / (lastTel!.rateLimitLimitRequests || 1)) *
+              100
+          )
+        )
+      )
+    : null;
 
   return (
-    <div className="absolute right-0 top-9 w-[340px] bg-[#181818]/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5 max-h-[86vh] overflow-y-auto">
+    <div className="absolute right-0 top-9 w-[355px] bg-[#181818]/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5 max-h-[86vh] overflow-y-auto">
       {/* Account & Library Section */}
       <div className="pb-3 border-b border-white/10 space-y-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
@@ -219,7 +246,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         </div>
       </div>
 
-      {/* Multi-Model AI Engine & Quota Telemetry (Max 7-day rolling storage) */}
+      {/* Dynamic Multi-Model AI Engine & Real API Telemetry */}
       <div className="pb-3 border-b border-white/10 space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
@@ -227,30 +254,15 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
             <span>{t.settings.aiEngine}</span>
           </div>
           <span
-            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
               aiStatus?.usingApiKey
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
             }`}
           >
+            {aiStatus?.provider || 'pollinations'} ·{' '}
             {aiStatus?.usingApiKey ? t.settings.aiKeyActive : t.settings.aiDefaultNoKey}
           </span>
-        </div>
-
-        {/* Model Selector */}
-        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
-          <Cpu className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
-          <select
-            value={selectedModel}
-            onChange={handleModelChange}
-            className="flex-1 bg-transparent text-[11px] font-medium text-white outline-none cursor-pointer"
-          >
-            {AI_MODEL_OPTIONS.map((m) => (
-              <option key={m.id} value={m.id} className="bg-[#181818] text-white">
-                {m.label} ({m.hint})
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* API Key Input */}
@@ -267,36 +279,121 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
           </div>
           <button
             onClick={handleSaveApiKey}
-            className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[11px] font-semibold cursor-pointer"
+            disabled={loadingModels}
+            className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[11px] font-semibold cursor-pointer disabled:opacity-50"
           >
-            {savedNotice ? t.settings.saved : t.settings.save}
+            {loadingModels ? '...' : savedNotice ? t.settings.saved : t.settings.save}
           </button>
         </div>
 
-        {/* Live Quota & Token Telemetry Box */}
-        <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-2">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="text-neutral-400">{t.settings.aiQuotaLabel}</span>
-            <span className="font-mono font-semibold text-white">
-              {remainingQuota} / {dailyLimit} req ({quotaPercent}%)
+        {/* Dynamic Model Selector fetched from the key's `/models` endpoint */}
+        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
+          <Cpu className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+          <select
+            value={selectedModel}
+            onChange={handleModelChange}
+            disabled={loadingModels}
+            className="flex-1 bg-transparent text-[11px] font-medium text-white outline-none cursor-pointer truncate"
+          >
+            {availableModels.map((m) => (
+              <option key={m.id} value={m.id} className="bg-[#181818] text-white">
+                {m.displayName} ({formatTokenCount(m.inputTokenLimit)} ctx)
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Real Provider Telemetry Box (from API `usageMetadata` / `usage`, `/models` & `x-ratelimit-*` headers) */}
+        <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-2 text-[10px]">
+          {/* Model Context & Output Hardware Limits from `/models` */}
+          <div className="flex items-center justify-between text-neutral-400">
+            <span className="flex items-center gap-1">
+              <Activity className="w-3 h-3 text-violet-400" />
+              {t.settings.aiContextLabel}:
+            </span>
+            <span className="font-mono text-neutral-200">
+              In: {formatTokenCount(aiStatus?.inputTokenLimit)} tk · Out:{' '}
+              {formatTokenCount(aiStatus?.outputTokenLimit)} tk
+              {lastTel?.serviceTier ? ` · Tier: ${lastTel.serviceTier}` : ''}
             </span>
           </div>
-          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all"
-              style={{ width: `${quotaPercent}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-0.5">
+
+          {/* Live Server Rate-Limit Headers (OpenAI / Groq / Anthropic) */}
+          {hasHeaderRateLimit && (
+            <div className="space-y-1 pt-1 border-t border-white/5">
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-400">{t.settings.aiRateLimitLabel}:</span>
+                <span className="font-mono text-emerald-400 font-semibold">
+                  {lastTel?.rateLimitRemainingRequests?.toLocaleString()} /{' '}
+                  {lastTel?.rateLimitLimitRequests?.toLocaleString()} req ({headerReqPercent}%)
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all"
+                  style={{ width: `${headerReqPercent || 0}%` }}
+                />
+              </div>
+              {typeof lastTel?.rateLimitRemainingTokens === 'number' && (
+                <div className="flex items-center justify-between text-neutral-400">
+                  <span>TPM Bucket:</span>
+                  <span className="font-mono text-neutral-200">
+                    {lastTel.rateLimitRemainingTokens.toLocaleString()} /{' '}
+                    {(lastTel.rateLimitLimitTokens || 0).toLocaleString()} tk
+                    {lastTel.rateLimitReset ? ` (reset ${lastTel.rateLimitReset})` : ''}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* OpenRouter Live Key Credits (`/api/v1/key`) */}
+          {aiStatus?.openRouterKeyInfo && typeof aiStatus.openRouterKeyInfo.usage === 'number' && (
+            <div className="flex items-center justify-between pt-1 border-t border-white/5 text-neutral-400">
+              <span>OpenRouter Usage:</span>
+              <span className="font-mono text-emerald-400">
+                ${aiStatus.openRouterKeyInfo.usage.toFixed(4)} USD
+                {aiStatus.openRouterKeyInfo.limit
+                  ? ` / $${aiStatus.openRouterKeyInfo.limit} USD`
+                  : ''}
+              </span>
+            </div>
+          )}
+
+          {/* Last API Response Real Token & Latency Breakdown */}
+          {lastTel && (lastTel.totalTokens || 0) > 0 && (
+            <div className="pt-1 border-t border-white/5 space-y-0.5">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span>{t.settings.aiLastCallLabel}:</span>
+                <span className="font-mono text-white">
+                  {(lastTel.totalTokens || 0).toLocaleString()} tk · {lastTel.latencyMs || 0} ms
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[9.5px] text-neutral-400 font-mono">
+                <span>Prompt: {(lastTel.promptTokens || 0).toLocaleString()}</span>
+                <span>Out: {(lastTel.completionTokens || 0).toLocaleString()}</span>
+                {(lastTel.reasoningTokens || 0) > 0 && (
+                  <span className="text-violet-300">
+                    Think: {(lastTel.reasoningTokens || 0).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Real Accumulated Usage Today & 7-Day Rolling Window */}
+          <div className="pt-1 border-t border-white/5 flex items-center justify-between text-neutral-400">
             <span>
               {t.settings.aiTokensTodayLabel}:{' '}
               <strong className="text-neutral-200 font-mono">
+                {aiStatus?.requestsToday || 0} req ·{' '}
                 {(aiStatus?.tokensToday || 0).toLocaleString()} tk
               </strong>
             </span>
             <span>
               {t.settings.aiTokens7dLabel}:{' '}
               <strong className="text-neutral-200 font-mono">
+                {aiStatus?.requestsLast7Days || 0} req ·{' '}
                 {(aiStatus?.tokensLast7Days || 0).toLocaleString()} tk
               </strong>
             </span>

@@ -74,12 +74,34 @@ export interface AISearchResponse {
   status?: AIStatusInfo;
 }
 
-export type AIModelId =
-  | 'free-default'
-  | 'gemini-2.5-flash'
-  | 'gemini-2.5-pro'
-  | 'gpt-4o-mini'
-  | 'llama-3.3-70b';
+export type AIModelId = string;
+
+export interface AIDynamicModelInfo {
+  id: string;
+  displayName: string;
+  provider: string;
+  inputTokenLimit: number;
+  outputTokenLimit: number;
+  supportsThinking: boolean;
+}
+
+export interface AILastCallTelemetry {
+  modelId?: string;
+  provider?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+  latencyMs?: number;
+  serviceTier?: string;
+  modelVersion?: string;
+  rateLimitRemainingRequests?: number;
+  rateLimitLimitRequests?: number;
+  rateLimitRemainingTokens?: number;
+  rateLimitLimitTokens?: number;
+  rateLimitReset?: string;
+  timestamp?: string;
+}
 
 export interface AIStatusInfo {
   selectedModel: AIModelId;
@@ -89,15 +111,24 @@ export interface AIStatusInfo {
   hasApiKey: boolean;
   apiKey: string;
   usingApiKey: boolean;
+  inputTokenLimit: number;
+  outputTokenLimit: number;
+  supportsThinking: boolean;
+  availableModels: AIDynamicModelInfo[];
   requestsToday: number;
-  dailyQuotaLimit: number;
-  remainingQuota: number;
-  rpmLimit: number;
   tokensToday: number;
-  lastTokens: number;
+  promptTokensToday: number;
+  completionTokensToday: number;
+  reasoningTokensToday: number;
   tokensLast7Days: number;
   requestsLast7Days: number;
   trackedDaysCount: number;
+  lastTelemetry?: AILastCallTelemetry;
+  openRouterKeyInfo?: {
+    usage?: number;
+    limit?: number | null;
+    is_free_tier?: boolean;
+  };
 }
 
 declare global {

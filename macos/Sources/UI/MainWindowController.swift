@@ -408,12 +408,12 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 responseObj = AISearchService.shared.setGeminiApiKey(key)
 
             case "getAiStatus":
-                responseObj = AISearchService.shared.getAiStatus()
+                responseObj = await AISearchService.shared.getAiStatus()
 
             case "saveAiConfig":
-                let model = (args["model"] as? String) ?? "free-default"
+                let model = (args["model"] as? String) ?? "openai-fast"
                 let key = (args["apiKey"] as? String) ?? ""
-                responseObj = AISearchService.shared.saveAiConfig(model: model, apiKey: key)
+                responseObj = await AISearchService.shared.saveAiConfig(model: model, apiKey: key)
 
             case "toggleMiniPlayer":
                 if !isMiniPlayer {
