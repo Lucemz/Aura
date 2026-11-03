@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ImportedPlaylist, ImportedTrack, ProviderLibraryResult } from '../../types';
+import { useI18n } from '../../i18n';
 
 interface SpotifyLibraryViewProps {
   spotifyData: ProviderLibraryResult | null;
@@ -36,6 +37,7 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
   onStartTransfer,
   onTransferSelectedPlaylist,
 }) => {
+  const { t } = useI18n();
   const [categoryTab, setCategoryTab] = useState<'likes' | 'playlists'>('likes');
 
   if (!spotifyData) {
@@ -45,14 +47,9 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
           <ShieldCheck className="w-8 h-8" />
         </div>
 
-        <h3 className="text-lg font-bold text-white mb-2">
-          Autorizar acceso a tu biblioteca de Spotify
-        </h3>
+        <h3 className="text-lg font-bold text-white mb-2">{t.importer.spotifyAuthTitle}</h3>
         <p className="text-xs text-neutral-400 max-w-md mb-6 leading-relaxed">
-          Al hacer clic abajo se abrirá la pantalla oficial de permisos de{' '}
-          <strong>Spotify (OAuth 2.0)</strong> en tu navegador. Solo pulsa{' '}
-          <strong>&ldquo;Aceptar&rdquo;</strong> para autorizar la lectura de tus{' '}
-          <strong>Canciones que te gustan</strong> y <strong>Playlists</strong>.
+          {t.importer.spotifyAuthDesc}
         </p>
 
         <button
@@ -63,11 +60,11 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
           {isConnecting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Cargando tu biblioteca de Spotify...</span>
+              <span>{t.importer.spotifyLoading}</span>
             </>
           ) : (
             <>
-              <span>Autorizar permisos en Spotify</span>
+              <span>{t.importer.spotifyAuthBtn}</span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}
@@ -90,9 +87,9 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
           >
             <Heart className="w-3.5 h-3.5" />
             <span>
-              Canciones que te gustan ({spotifyData.likedSongs.length}
+              {t.importer.likedSongsCount} ({spotifyData.likedSongs.length}
               {spotifyData.totalLiked && spotifyData.totalLiked > spotifyData.likedSongs.length
-                ? ` de ${spotifyData.totalLiked}`
+                ? ` ${t.importer.of} ${spotifyData.totalLiked}`
                 : ''}
               )
             </span>
@@ -107,7 +104,9 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
             }`}
           >
             <ListMusic className="w-3.5 h-3.5" />
-            <span>Playlists ({spotifyData.playlists.length})</span>
+            <span>
+              {t.importer.playlistsCount} ({spotifyData.playlists.length})
+            </span>
           </button>
         </div>
 
@@ -121,14 +120,14 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
             className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} />
-            <span>Actualizar</span>
+            <span>{t.importer.refresh}</span>
           </button>
           <button
             onClick={() => onConnectSpotify(true)}
             disabled={isConnecting}
             className="text-xs text-neutral-500 hover:text-neutral-300 cursor-pointer disabled:opacity-50"
           >
-            Cambiar cuenta
+            {t.importer.switchAccount}
           </button>
         </div>
       </div>
@@ -146,7 +145,9 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
               ) : (
                 <Square className="w-4 h-4 text-neutral-500" />
               )}
-              <span>Seleccionar todas ({selectedTrackIndices.size} seleccionadas)</span>
+              <span>
+                {t.importer.selectAll} ({selectedTrackIndices.size} {t.importer.selected})
+              </span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -161,7 +162,7 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
                 className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 shadow cursor-pointer transition"
               >
                 <Heart className="w-3.5 h-3.5 fill-current" />
-                <span>Enviar a mis &ldquo;Me gusta&rdquo; de YouTube Music</span>
+                <span>{t.importer.sendToLikes}</span>
               </button>
 
               <button
@@ -170,11 +171,11 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
                   const chosen = spotifyData.likedSongs.filter((_, i) =>
                     selectedTrackIndices.has(i)
                   );
-                  onStartTransfer(chosen, 'playlist', 'Favoritas de Spotify');
+                  onStartTransfer(chosen, 'playlist', 'Spotify Favorites');
                 }}
                 className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-xs font-medium cursor-pointer transition"
               >
-                Crear como Playlist en YT Music
+                {t.importer.createAsPlaylist}
               </button>
             </div>
           </div>
@@ -254,7 +255,7 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
                         {pl.description} •{' '}
                       </span>
                     ) : null}
-                    {pl.trackCount ? `${pl.trackCount} canciones` : 'Playlist'}
+                    {pl.trackCount ? `${pl.trackCount}` : 'Playlist'}
                   </p>
                 </div>
               </div>
@@ -265,14 +266,14 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
                   disabled={isConnecting}
                   className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
                 >
-                  Crear Playlist en YTM
+                  {t.importer.createPlaylistBtn}
                 </button>
                 <button
                   onClick={() => onTransferSelectedPlaylist(pl, 'likes')}
                   disabled={isConnecting}
                   className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
                 >
-                  Enviar a mis Likes
+                  {t.importer.sendToLikesShort}
                 </button>
               </div>
             </div>

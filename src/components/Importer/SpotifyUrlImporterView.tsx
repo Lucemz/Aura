@@ -1,6 +1,7 @@
 import React from 'react';
 import { Heart, Loader2, CheckSquare, Square } from 'lucide-react';
 import { ImportedTrack } from '../../types';
+import { useI18n } from '../../i18n';
 
 interface SpotifyUrlImporterViewProps {
   urlInput: string;
@@ -31,6 +32,8 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
   onToggleTrackSelection,
   onStartTransfer,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-6">
       <form onSubmit={onParseUrl} className="flex items-center gap-2 mb-4">
@@ -38,7 +41,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
           type="text"
           value={urlInput}
           onChange={(e) => onUrlInputChange(e.target.value)}
-          placeholder="Pega el enlace de una Playlist o Álbum de Spotify (https://open.spotify.com/playlist/...)..."
+          placeholder={t.importer.urlPlaceholder}
           className="flex-1 bg-black/50 border border-white/15 rounded-xl px-4 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#1DB954]"
         />
         <button
@@ -49,10 +52,10 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
           {isParsingUrl ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Leyendo...</span>
+              <span>{t.importer.urlReading}</span>
             </>
           ) : (
-            <span>Extraer Canciones</span>
+            <span>{t.importer.urlExtractBtn}</span>
           )}
         </button>
       </form>
@@ -61,7 +64,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400">Nombre en YT Music:</span>
+              <span className="text-xs text-neutral-400">{t.importer.urlPlaylistNameLabel}</span>
               <input
                 type="text"
                 value={customPlaylistName}
@@ -80,7 +83,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
                 }}
                 className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold cursor-pointer transition"
               >
-                Crear Playlist en mi YT Music ({selectedTrackIndices.size})
+                {t.importer.createPlaylistBtn} ({selectedTrackIndices.size})
               </button>
 
               <button
@@ -93,7 +96,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
                 className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition"
               >
                 <Heart className="w-3.5 h-3.5 text-red-400 fill-current" />
-                <span>Enviar a mis Likes</span>
+                <span>{t.importer.sendToLikesShort}</span>
               </button>
             </div>
           </div>
@@ -127,8 +130,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
         </div>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center text-neutral-500 text-xs">
-          Pega cualquier link de Playlist o Álbum de Spotify arriba para ver todas sus canciones y
-          transferirlas a tu cuenta de YouTube Music.
+          {t.importer.urlEmptyHint}
         </div>
       )}
     </div>

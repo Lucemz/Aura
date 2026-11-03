@@ -1,7 +1,7 @@
 {
-  "name": "aura-music-mac",
-  "version": "1.0.0",
-  "description": "AI-First Music Player for macOS powered by Gemini and YouTube",
+  "name": "aura",
+  "version": "2.0.0",
+  "description": "Native macOS Music Player powered by Safari WebKit (Spatial Audio), AI Vibe Search, and Spotify/Apple Music Importer",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {

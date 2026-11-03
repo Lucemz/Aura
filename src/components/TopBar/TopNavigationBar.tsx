@@ -13,6 +13,7 @@ import {
 import { AudioPreset, UserProfile } from '../../types';
 import { SettingsPopover, PlayerThemeMode } from './SettingsPopover';
 import { AISearchIcon } from '../AISearch/AISearchIcon';
+import { useI18n } from '../../i18n';
 
 interface TopNavigationBarProps {
   ytmProfile: UserProfile;
@@ -57,6 +58,8 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
   onSelectPreset,
   onToggleAutoSkipAds,
 }) => {
+  const { t } = useI18n();
+
   return (
     <header
       className="h-10 bg-[#0a0a0a] border-b border-white/10 flex items-center justify-between pl-20 pr-3 flex-shrink-0 relative z-50"
@@ -70,21 +73,21 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
         <button
           onClick={onGoBack}
           className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-          title="Atrás"
+          title={t.topBar.back}
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <button
           onClick={onGoForward}
           className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-          title="Adelante"
+          title={t.topBar.forward}
         >
           <ArrowRight className="w-4 h-4" />
         </button>
         <button
           onClick={onReload}
           className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-          title="Recargar YouTube Music"
+          title={t.topBar.reload}
         >
           <RotateCw className="w-3.5 h-3.5" />
         </button>
@@ -96,20 +99,20 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
           className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5 transition cursor-pointer"
         >
           <Home className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Inicio</span>
+          <span className="hidden sm:inline">{t.topBar.home}</span>
         </button>
 
         <button
           onClick={() => onNavigate('https://music.youtube.com/playlist?list=LM')}
           className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5 transition cursor-pointer"
-          title="Ir a Música que me gusta dentro de YouTube Music"
+          title={t.topBar.likedSongsTooltip}
         >
           <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500" />
-          <span className="hidden md:inline">Mis Me Gusta</span>
+          <span className="hidden md:inline">{t.topBar.likedSongs}</span>
         </button>
       </div>
 
-      {/* Right Value-Added Controls: AI Search (Magnifying Glass + AI), MiniPlayer & Settings */}
+      {/* Right Value-Added Controls: AI Search, MiniPlayer & Settings */}
       <div
         className="flex items-center gap-2 relative"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -118,17 +121,17 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
           <button
             onClick={onOpenGoogleLogin}
             className="px-3 py-1 rounded-lg bg-white text-black hover:bg-neutral-200 text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-            title="Iniciar sesión en tu cuenta de Google / YouTube Music"
+            title={t.topBar.signInTooltip}
           >
             <LogIn className="w-3.5 h-3.5" />
-            <span>Iniciar Sesión</span>
+            <span>{t.topBar.signIn}</span>
           </button>
         )}
 
         <button
           onClick={onOpenAISearch}
           className="px-3 py-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.14] border border-white/15 text-white text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
-          title="Búsqueda inteligente por momento o atmósfera"
+          title={t.topBar.aiSearchTooltip}
         >
           <AISearchIcon className="w-4 h-4 text-violet-400" />
           <span>Aura AI</span>
@@ -137,7 +140,7 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
         <button
           onClick={onToggleMini}
           className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-          title={isMiniPlayer ? 'Expandir ventana' : 'Modo Mini-Player Flotante'}
+          title={isMiniPlayer ? t.topBar.miniPlayerExpand : t.topBar.miniPlayerCollapse}
         >
           {isMiniPlayer ? (
             <Maximize2 className="w-3.5 h-3.5" />
@@ -159,7 +162,7 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
           ) : (
             <Settings className="w-3.5 h-3.5" />
           )}
-          <span className="hidden sm:inline">Configuraciones</span>
+          <span className="hidden sm:inline">{t.topBar.settings}</span>
         </button>
 
         {isSettingsOpen && (

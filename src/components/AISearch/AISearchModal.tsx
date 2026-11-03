@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Play, Loader2, Heart, Check, AlertCircle } from 'lucide-react';
 import { AISongRecommendation } from '../../types';
 import { AISearchIcon } from './AISearchIcon';
+import { useI18n } from '../../i18n';
 
 interface AISearchModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
   onPlayTrack,
   onLikeTrack,
 }) => {
+  const { t } = useI18n();
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,13 +41,13 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
         if (res.ok && res.songs && res.songs.length > 0) {
           setSongs(res.songs);
         } else {
-          setError(res.error || 'No se encontraron pistas para esa frecuencia.');
+          setError(res.error || t.aiSearch.errorEmpty);
         }
       } else {
-        setError('Búsqueda no disponible en este momento.');
+        setError(t.aiSearch.errorUnavailable);
       }
     } catch {
-      setError('No se pudo conectar con el buscador.');
+      setError(t.aiSearch.errorUnavailable);
     } finally {
       setIsLoading(false);
     }
@@ -84,7 +86,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
             type="submit"
             disabled={isLoading || !prompt.trim()}
             className="text-[#aaa] hover:text-white disabled:opacity-50 transition cursor-pointer flex-shrink-0"
-            title="Buscar"
+            title={t.aiSearch.searchTooltip}
           >
             {isLoading ? (
               <Loader2 className="w-5 h-5 text-white animate-spin" />
@@ -97,7 +99,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
             type="text"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Sintoniza tu frecuencia, atmósfera o momento..."
+            placeholder={t.aiSearch.placeholder}
             autoFocus
             className="flex-1 bg-transparent text-[14px] font-normal text-white placeholder-[#888] outline-none"
           />
@@ -107,7 +109,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
               type="button"
               onClick={() => setPrompt('')}
               className="p-1 text-[#888] hover:text-white cursor-pointer"
-              title="Limpiar"
+              title={t.aiSearch.clearTooltip}
             >
               <X className="w-4 h-4" />
             </button>
@@ -127,7 +129,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
             {isLoading && (
               <div className="py-10 flex items-center justify-center gap-2.5 text-[#aaa] text-xs">
                 <Loader2 className="w-4 h-4 animate-spin text-white" />
-                <span>Sintonizando pistas en YouTube Music...</span>
+                <span>{t.aiSearch.loading}</span>
               </div>
             )}
 
@@ -173,7 +175,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
 
                     <button
                       onClick={(e) => handleLike(e, song.videoId)}
-                      title="Agregar a Mis Me gusta"
+                      title={t.aiSearch.likeTooltip}
                       className={`p-2 rounded-full cursor-pointer flex-shrink-0 transition ${
                         isLiked
                           ? 'text-white bg-white/15'

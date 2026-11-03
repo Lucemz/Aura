@@ -17,19 +17,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupMainMenu() {
+        let isES = AppConfig.isSpanishSystem
         let mainMenu = NSMenu()
 
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "Ocultar Aura",
+            withTitle: isES ? "Ocultar Aura" : "Hide Aura",
             action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h"
         )
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "Salir de Aura",
+            withTitle: isES ? "Salir de Aura" : "Quit Aura",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -37,15 +38,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
-        let editMenu = NSMenu(title: "Edición")
-        editMenu.addItem(withTitle: "Deshacer", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "Rehacer", action: Selector(("redo:")), keyEquivalent: "Z")
+        let editMenu = NSMenu(title: isES ? "Edición" : "Edit")
+        editMenu.addItem(withTitle: isES ? "Deshacer" : "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: isES ? "Rehacer" : "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "Cortar", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copiar", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Pegar", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: isES ? "Cortar" : "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: isES ? "Copiar" : "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: isES ? "Pegar" : "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(
-            withTitle: "Seleccionar todo",
+            withTitle: isES ? "Seleccionar todo" : "Select All",
             action: #selector(NSText.selectAll(_:)),
             keyEquivalent: "a"
         )

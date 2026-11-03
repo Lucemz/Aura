@@ -10,6 +10,7 @@ import { TransferProgressView } from './TransferProgressView';
 import { SpotifyLibraryView } from './SpotifyLibraryView';
 import { AppleMusicLibraryView } from './AppleMusicLibraryView';
 import { SpotifyUrlImporterView } from './SpotifyUrlImporterView';
+import { useI18n } from '../../i18n';
 
 interface MusicImporterModalProps {
   isOpen: boolean;
@@ -34,6 +35,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   onLikeTrackInWebview,
   onCreatePlaylistInWebview,
 }) => {
+  const { t } = useI18n();
   const [sourceTab, setSourceTab] = useState<'spotify' | 'apple' | 'url'>('spotify');
 
   // Spotify & Apple Music Library State
@@ -95,10 +97,10 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
         setSpotifyData(res);
         setSelectedTrackIndices(new Set((res.likedSongs || []).map((_, idx) => idx)));
       } else {
-        setStatusError(res?.error || 'No se pudo autorizar el acceso con Spotify.');
+        setStatusError(res?.error || 'Could not authorize Spotify access.');
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Error al autorizar con Spotify.');
+      setStatusError(err.message || 'Spotify authorization error.');
     } finally {
       setIsConnecting(false);
     }
@@ -113,10 +115,10 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
         setAppleData(res);
         setSelectedTrackIndices(new Set((res.likedSongs || []).map((_, idx) => idx)));
       } else {
-        setStatusError(res?.error || 'No se pudo leer la app Música de tu Mac.');
+        setStatusError(res?.error || 'Could not read Mac Music app.');
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Error al conectar con la app Música de tu Mac.');
+      setStatusError(err.message || 'Error connecting to Mac Music app.');
     } finally {
       setIsConnecting(false);
     }
@@ -131,19 +133,16 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       const res = await window.auraAPI?.parseExternalMusicUrl(urlInput.trim());
       if (res && res.ok && res.tracks && res.tracks.length > 0) {
         setUrlParsedData({
-          title: res.title || 'Playlist de Spotify',
+          title: res.title || 'Spotify Playlist',
           tracks: res.tracks,
         });
-        setCustomPlaylistName(res.title || 'Playlist de Spotify');
+        setCustomPlaylistName(res.title || 'Spotify Playlist');
         setSelectedTrackIndices(new Set(res.tracks.map((_, idx) => idx)));
       } else {
-        setStatusError(
-          res?.error ||
-            'No se encontraron pistas en ese enlace. Verifica que la playlist sea pública.'
-        );
+        setStatusError(res?.error || 'No tracks found at that link.');
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Error al analizar el enlace.');
+      setStatusError(err.message || 'Error parsing URL.');
     } finally {
       setIsParsingUrl(false);
     }
@@ -170,7 +169,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   const startTransfer = async (
     tracksToTransfer: ImportedTrack[],
     destination: 'likes' | 'playlist',
-    playlistTitle = 'Playlist de Spotify'
+    playlistTitle = 'Imported Playlist'
   ) => {
     if (!tracksToTransfer.length) return;
     setStatusError(null);
@@ -180,9 +179,9 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     setTransferDestination(destination);
 
     setTransferLogs(
-      tracksToTransfer.map((t) => ({
-        title: t.title,
-        artist: t.artist,
+      tracksToTransfer.map((tr) => ({
+        title: tr.title,
+        artist: tr.artist,
         status: 'pending',
       }))
     );
@@ -204,8 +203,8 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
           if (destination === 'likes') {
             let likedOk = await onLikeTrackInWebview(match.videoId);
             if (!likedOk && window.auraAPI?.likeSongOnYouTubeMusic) {
-              const ipcRes = await window.auraAPI.likeSongOnYouTubeMusic(match.videoId);
-              likedOk = ipcRes.ok;
+              const likeRes = await window.auraAPI.likeSongOnYouTubeMusic(match.videoId);
+              likedOk = Boolean(likeRes?.ok);
             }
 
             setTransferLogs((prev) =>
@@ -214,9 +213,9 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                   ? {
                       ...item,
                       status: likedOk ? 'synced' : 'failed',
-                      matchedTitle: `${match.artist} - ${match.title}`,
+                      matchedTitle: match.title,
                       videoId: match.videoId,
-                      error: likedOk ? undefined : 'No se pudo marcar Like (verifica tu sesión)',
+                      error: likedOk ? undefined : 'Sign in to YouTube Music required',
                     }
                   : item
               )
@@ -228,7 +227,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                   ? {
                       ...item,
                       status: 'synced',
-                      matchedTitle: `${match.artist} - ${match.title}`,
+                      matchedTitle: match.title,
                       videoId: match.videoId,
                     }
                   : item
@@ -238,9 +237,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
         } else {
           setTransferLogs((prev) =>
             prev.map((item, idx) =>
-              idx === i
-                ? { ...item, status: 'failed', error: 'No se encontró coincidencia en YT Music' }
-                : item
+              idx === i ? { ...item, status: 'failed', error: 'No match found on YTM' } : item
             )
           );
         }
@@ -254,8 +251,8 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     }
 
     if (destination === 'playlist' && matchedVideoIds.length > 0) {
-      const finalTitle = playlistTitle.trim() || 'Playlist de Spotify';
-      const desc = 'Importada desde Spotify con Aura Music';
+      const finalTitle = playlistTitle.trim() || 'Imported Playlist';
+      const desc = 'Imported with Aura Music';
 
       let plId = await onCreatePlaylistInWebview(finalTitle, desc, matchedVideoIds);
       if (!plId && window.auraAPI?.createPlaylistOnYouTubeMusic) {
@@ -289,11 +286,11 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       if (tracks && tracks.length > 0) {
         await startTransfer(tracks, destination, pl.title);
       } else {
-        setStatusError('No se encontraron canciones dentro de esta playlist.');
+        setStatusError('No tracks found inside this playlist.');
       }
     } catch (err: any) {
       setIsConnecting(false);
-      setStatusError(err.message || 'Error al obtener las canciones de la playlist.');
+      setStatusError(err.message || 'Error fetching playlist tracks.');
     }
   };
 
@@ -313,13 +310,8 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
               <RefreshCw className="w-5 h-5 text-[#1DB954]" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
-                Importar de Spotify o Apple Music a YouTube Music
-              </h2>
-              <p className="text-xs text-neutral-400">
-                Transfiere tus canciones favoritas y Playlists desde Spotify o desde la app nativa
-                Música de tu Mac hacia YouTube Music
-              </p>
+              <h2 className="text-base font-bold text-white">{t.importer.modalTitle}</h2>
+              <p className="text-xs text-neutral-400">{t.importer.modalSubtitle}</p>
             </div>
           </div>
 
@@ -336,16 +328,13 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
           <div className="mx-6 mt-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
             <div className="flex items-center gap-2.5 text-xs text-amber-200">
               <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-              <span>
-                Para que los <strong>Likes</strong> y <strong>Playlists</strong> se guarden en tu
-                cuenta real de YouTube Music, inicia sesión primero.
-              </span>
+              <span>{t.importer.loginWarning}</span>
             </div>
             <button
               onClick={onOpenGoogleLogin}
               className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs flex-shrink-0 cursor-pointer transition"
             >
-              Iniciar sesión en YT Music
+              {t.importer.loginButton}
             </button>
           </div>
         )}
@@ -384,7 +373,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 }`}
               >
                 <Music className="w-4 h-4" />
-                <span>Spotify (OAuth)</span>
+                <span>{t.importer.tabSpotify}</span>
               </button>
 
               <button
@@ -406,7 +395,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 }`}
               >
                 <Music className="w-4 h-4" />
-                <span>Apple Music (App Música Mac)</span>
+                <span>{t.importer.tabApple}</span>
               </button>
 
               <button
@@ -421,7 +410,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 }`}
               >
                 <Link2 className="w-4 h-4" />
-                <span>Pegar Link de Playlist</span>
+                <span>{t.importer.tabUrl}</span>
               </button>
             </div>
 

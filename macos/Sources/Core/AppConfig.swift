@@ -52,4 +52,9 @@ enum AppConfig {
     static var settingsFileURL: URL {
         appSupportDirectory.appendingPathComponent("aura-settings.json")
     }
+
+    static var isSpanishSystem: Bool {
+        let first = Locale.preferredLanguages.first?.lowercased() ?? "en"
+        return first.hasPrefix("es")
+    }
 }

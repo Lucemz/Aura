@@ -5,18 +5,24 @@ import WebKit
 final class AISearchService {
     static let shared = AISearchService()
 
-    private let systemInstruction = """
-    Eres Aura AI, un curador musical experto. El usuario describirá qué está haciendo, cómo se siente o qué ambiente busca (por ejemplo: "estoy programando y quiero música motivadora").
-    NO hagas una búsqueda literal de las palabras del usuario. Razona qué canciones reales encajan mejor con ese estado de ánimo, actividad, ritmo y energía.
-    Devuelve ÚNICAMENTE un arreglo JSON válido con exactamente 8 canciones recomendadas, sin texto adicional ni bloques markdown, con este esquema exacto:
-    [
-      {
-        "title": "Nombre exacto de la canción",
-        "artist": "Nombre del artista",
-        "reason": "Breve explicación en español (máximo 12 palabras) de por qué encaja"
-      }
-    ]
-    """
+    private var systemInstruction: String {
+        let langNote = AppConfig.isSpanishSystem
+            ? "Write the 'reason' field in the same language as the user's prompt (defaulting to Spanish)."
+            : "Write the 'reason' field in the same language as the user's prompt (defaulting to English)."
+        return """
+        You are Aura AI, an expert music curator. The user will describe what they are doing, how they feel, or what atmosphere they want.
+        Do NOT perform a literal keyword match. Reason about real songs that best fit that mood, activity, tempo, and energy.
+        \(langNote)
+        Return ONLY a valid JSON array of 8 recommended songs with no extra text or markdown blocks, matching this exact schema:
+        [
+          {
+            "title": "Exact song title",
+            "artist": "Artist name",
+            "reason": "Short explanation (max 10 words) of why it fits"
+          }
+        ]
+        """
+    }
 
     // MARK: - Persistent Gemini API Key Management (stored in ~/Library/Application Support/Aura/aura-settings.json)
 

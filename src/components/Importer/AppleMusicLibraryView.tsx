@@ -10,6 +10,7 @@ import {
   Music2,
 } from 'lucide-react';
 import { ImportedPlaylist, ImportedTrack, ProviderLibraryResult } from '../../types';
+import { useI18n } from '../../i18n';
 
 interface AppleMusicLibraryViewProps {
   appleData: ProviderLibraryResult | null;
@@ -36,6 +37,7 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
   onStartTransfer,
   onTransferSelectedPlaylist,
 }) => {
+  const { t } = useI18n();
   const [categoryTab, setCategoryTab] = useState<'likes' | 'playlists'>('likes');
 
   if (!appleData) {
@@ -45,13 +47,9 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
           <Music2 className="w-8 h-8" />
         </div>
 
-        <h3 className="text-lg font-bold text-white mb-2">
-          Leer biblioteca desde la app Música de tu Mac
-        </h3>
+        <h3 className="text-lg font-bold text-white mb-2">{t.importer.appleAuthTitle}</h3>
         <p className="text-xs text-neutral-400 max-w-md mb-6 leading-relaxed">
-          Conecta directamente con la app nativa <strong>Música (Apple Music)</strong> instalada en
-          tu Mac para importar tus <strong>Canciones Favoritas</strong>, toda tu biblioteca y tus{' '}
-          <strong>Playlists</strong> sin necesidad de tokens externos.
+          {t.importer.appleAuthDesc}
         </p>
 
         <button
@@ -62,11 +60,11 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
           {isConnecting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Leyendo tu biblioteca de Apple Music...</span>
+              <span>{t.importer.appleLoading}</span>
             </>
           ) : (
             <>
-              <span>Conectar con la app Música de mi Mac</span>
+              <span>{t.importer.appleAuthBtn}</span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}
@@ -88,7 +86,9 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
             }`}
           >
             <Heart className="w-3.5 h-3.5" />
-            <span>Canciones de tu Biblioteca ({appleData.likedSongs.length})</span>
+            <span>
+              {t.importer.librarySongsCount} ({appleData.likedSongs.length})
+            </span>
           </button>
 
           <button
@@ -100,19 +100,21 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
             }`}
           >
             <ListMusic className="w-3.5 h-3.5" />
-            <span>Playlists ({appleData.playlists.length})</span>
+            <span>
+              {t.importer.playlistsCount} ({appleData.playlists.length})
+            </span>
           </button>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs text-[#FA243C] font-medium">✓ App Música (macOS)</span>
+          <span className="text-xs text-[#FA243C] font-medium">✓ Music.app (macOS)</span>
           <button
             onClick={onConnectAppleMusic}
             disabled={isConnecting}
             className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} />
-            <span>Actualizar</span>
+            <span>{t.importer.refresh}</span>
           </button>
         </div>
       </div>
@@ -130,7 +132,9 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
               ) : (
                 <Square className="w-4 h-4 text-neutral-500" />
               )}
-              <span>Seleccionar todas ({selectedTrackIndices.size} seleccionadas)</span>
+              <span>
+                {t.importer.selectAll} ({selectedTrackIndices.size} {t.importer.selected})
+              </span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -145,7 +149,7 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
                 className="px-4 py-1.5 rounded-lg bg-[#FA243C] hover:bg-[#ff3b52] disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 shadow cursor-pointer transition"
               >
                 <Heart className="w-3.5 h-3.5 fill-current" />
-                <span>Enviar a mis &ldquo;Me gusta&rdquo; de YouTube Music</span>
+                <span>{t.importer.sendToLikes}</span>
               </button>
 
               <button
@@ -154,11 +158,11 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
                   const chosen = appleData.likedSongs.filter((_, i) =>
                     selectedTrackIndices.has(i)
                   );
-                  onStartTransfer(chosen, 'playlist', 'Favoritas de Apple Music');
+                  onStartTransfer(chosen, 'playlist', 'Apple Music Favorites');
                 }}
                 className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-xs font-medium cursor-pointer transition"
               >
-                Crear como Playlist en YT Music
+                {t.importer.createAsPlaylist}
               </button>
             </div>
           </div>
@@ -213,7 +217,7 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
                   <p className="text-xs font-bold text-white truncate">{pl.title}</p>
                   <p className="text-[11px] text-neutral-400 truncate">
                     {pl.description ? `${pl.description} • ` : ''}
-                    {pl.trackCount ? `${pl.trackCount} canciones` : 'Playlist'}
+                    {pl.trackCount ? `${pl.trackCount}` : 'Playlist'}
                   </p>
                 </div>
               </div>
@@ -224,14 +228,14 @@ export const AppleMusicLibraryView: React.FC<AppleMusicLibraryViewProps> = ({
                   disabled={isConnecting}
                   className="px-3 py-1 rounded-lg bg-[#FA243C] hover:bg-[#ff3b52] text-white text-[11px] font-semibold cursor-pointer transition"
                 >
-                  Crear Playlist en YTM
+                  {t.importer.createPlaylistBtn}
                 </button>
                 <button
                   onClick={() => onTransferSelectedPlaylist(pl, 'likes')}
                   disabled={isConnecting}
                   className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
                 >
-                  Enviar a mis Likes
+                  {t.importer.sendToLikesShort}
                 </button>
               </div>
             </div>

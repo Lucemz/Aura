@@ -8,6 +8,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { TransferLogItem } from '../../types';
+import { useI18n } from '../../i18n';
 
 interface TransferProgressViewProps {
   transferLogs: TransferLogItem[];
@@ -28,6 +29,7 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
   onNavigateIframe,
   onClose,
 }) => {
+  const { t } = useI18n();
   const syncedCount = transferLogs.filter((l) => l.status === 'synced').length;
   const processedCount = transferLogs.filter(
     (l) => l.status !== 'pending' && l.status !== 'searching'
@@ -40,8 +42,8 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-white">
             {transferDone
-              ? `¡Transferencia completada! (${syncedCount} de ${transferLogs.length} canciones sincronizadas en tu cuenta de YouTube Music)`
-              : `Sincronizando con tu cuenta real de YouTube Music... (${syncedCount} / ${transferLogs.length})`}
+              ? `${t.importer.transferDoneTitle} (${syncedCount} / ${transferLogs.length} ${t.importer.transferSyncedSuffix})`
+              : `${t.importer.transferringTitle} (${syncedCount} / ${transferLogs.length})`}
           </span>
           <span className="text-xs font-mono text-neutral-400">
             {Math.round((syncedCount / totalCount) * 100)}%
@@ -68,30 +70,34 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
               </p>
               {log.matchedTitle && (
                 <p className="text-[11px] text-emerald-400 truncate">
-                  ✓ Match en YT Music: {log.matchedTitle}
+                  ✓ YT Music: {log.matchedTitle}
                 </p>
               )}
               {log.error && <p className="text-[11px] text-red-400">{log.error}</p>}
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
-              {log.status === 'pending' && <span className="text-neutral-500">En cola</span>}
+              {log.status === 'pending' && (
+                <span className="text-neutral-500">{t.importer.statusQueued}</span>
+              )}
               {log.status === 'searching' && (
                 <span className="flex items-center gap-1.5 text-amber-400">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Sincronizando...
+                  {t.importer.statusSyncing}
                 </span>
               )}
               {log.status === 'synced' && (
                 <span className="flex items-center gap-1 text-emerald-400 font-medium">
                   <CheckCircle2 className="w-4 h-4" />
-                  {transferDestination === 'likes' ? 'Like en YT Music' : 'En Playlist'}
+                  {transferDestination === 'likes'
+                    ? t.importer.statusLiked
+                    : t.importer.statusInPlaylist}
                 </span>
               )}
               {log.status === 'failed' && (
                 <span className="flex items-center gap-1 text-red-400">
                   <AlertCircle className="w-4 h-4" />
-                  Falló
+                  {t.importer.statusFailed}
                 </span>
               )}
             </div>
@@ -105,7 +111,7 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
             onClick={onReset}
             className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-medium text-white cursor-pointer transition"
           >
-            ← Importar más música
+            {t.importer.importMore}
           </button>
 
           <div className="flex items-center gap-3">
@@ -118,7 +124,7 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
                 className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg cursor-pointer transition"
               >
                 <Heart className="w-4 h-4 fill-current" />
-                <span>Ver mis &ldquo;Me gusta&rdquo; en YouTube Music ahora</span>
+                <span>{t.importer.viewLikesNow}</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </button>
             ) : (
@@ -133,7 +139,7 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
                 className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg cursor-pointer transition"
               >
                 <ListMusic className="w-4 h-4" />
-                <span>Ver Playlist creada en YouTube Music ahora</span>
+                <span>{t.importer.viewPlaylistNow}</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </button>
             )}

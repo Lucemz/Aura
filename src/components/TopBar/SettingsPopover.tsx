@@ -8,9 +8,11 @@ import {
   KeyRound,
   RefreshCw,
   Palette,
+  Globe,
 } from 'lucide-react';
 import { AudioPreset, UserProfile } from '../../types';
 import { AISearchIcon } from '../AISearch/AISearchIcon';
+import { useI18n, LocalePreference } from '../../i18n';
 
 export type PlayerThemeMode = 'dynamic' | 'violet' | 'emerald' | 'cyan' | 'rose' | 'youtube';
 
@@ -27,22 +29,6 @@ interface SettingsPopoverProps {
   onToggleAutoSkipAds: () => void;
 }
 
-const PRESET_OPTIONS: { id: AudioPreset; label: string }[] = [
-  { id: 'flat', label: 'Original (Plano)' },
-  { id: 'bass', label: 'Bass Boost' },
-  { id: 'vocal', label: 'Claridad Vocal' },
-  { id: 'warm', label: 'Estudio Cálido' },
-];
-
-const THEME_OPTIONS: { id: PlayerThemeMode; label: string; dot: string }[] = [
-  { id: 'dynamic', label: 'Dinámico (Canción)', dot: 'bg-gradient-to-tr from-cyan-400 via-violet-500 to-rose-500' },
-  { id: 'violet', label: 'Aura Violeta', dot: 'bg-[#8b5cf6]' },
-  { id: 'emerald', label: 'Esmeralda', dot: 'bg-[#10b981]' },
-  { id: 'cyan', label: 'Cian', dot: 'bg-[#06b6d4]' },
-  { id: 'rose', label: 'Coral', dot: 'bg-[#f43f5e]' },
-  { id: 'youtube', label: 'Rojo YT', dot: 'bg-[#ff0000]' },
-];
-
 export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   ytmProfile,
   audioPreset,
@@ -55,9 +41,36 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   onSelectPreset,
   onToggleAutoSkipAds,
 }) => {
+  const { t, preference, setPreference } = useI18n();
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [hasSavedKey, setHasSavedKey] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+
+  const presetOptions: { id: AudioPreset; label: string }[] = [
+    { id: 'flat', label: t.settings.presetFlat },
+    { id: 'bass', label: t.settings.presetBass },
+    { id: 'vocal', label: t.settings.presetVocal },
+    { id: 'warm', label: t.settings.presetWarm },
+  ];
+
+  const themeOptions: { id: PlayerThemeMode; label: string; dot: string }[] = [
+    {
+      id: 'dynamic',
+      label: t.settings.themeDynamic,
+      dot: 'bg-gradient-to-tr from-cyan-400 via-violet-500 to-rose-500',
+    },
+    { id: 'violet', label: t.settings.themeViolet, dot: 'bg-[#8b5cf6]' },
+    { id: 'emerald', label: t.settings.themeEmerald, dot: 'bg-[#10b981]' },
+    { id: 'cyan', label: t.settings.themeCyan, dot: 'bg-[#06b6d4]' },
+    { id: 'rose', label: t.settings.themeRose, dot: 'bg-[#f43f5e]' },
+    { id: 'youtube', label: t.settings.themeYoutube, dot: 'bg-[#ff0000]' },
+  ];
+
+  const langOptions: { id: LocalePreference; label: string }[] = [
+    { id: 'system', label: t.settings.langSystem },
+    { id: 'en', label: 'EN' },
+    { id: 'es', label: 'ES' },
+  ];
 
   useEffect(() => {
     if (window.auraAPI?.getAiApiKey) {
@@ -81,10 +94,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
 
   return (
     <div className="absolute right-0 top-9 w-80 bg-[#181818]/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5">
-      {/* Account & Spotify Importer Section */}
+      {/* Account & Library Section */}
       <div className="pb-3 border-b border-white/10 space-y-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-          Cuenta y Biblioteca
+          {t.settings.accountAndLibrary}
         </p>
         {ytmProfile.loggedIn ? (
           <div className="flex items-center justify-between">
@@ -97,16 +110,18 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
                 </div>
               )}
               <div className="min-w-0">
-                <p className="text-xs font-bold text-white truncate">{ytmProfile.name}</p>
+                <p className="text-xs font-bold text-white truncate">
+                  {t.settings.connectedAccount}
+                </p>
                 <p className="text-[11px] text-emerald-400 truncate">
-                  {ytmProfile.email || 'Sesión activa'}
+                  {ytmProfile.email || t.settings.activeSession}
                 </p>
               </div>
             </div>
             <button
               onClick={onLogout}
               className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 transition cursor-pointer"
-              title="Cerrar sesión"
+              title={t.settings.signOut}
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -117,7 +132,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
             className="w-full py-2 px-3 rounded-xl bg-white text-black hover:bg-neutral-200 font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition"
           >
             <LogIn className="w-4 h-4" />
-            <span>Iniciar sesión en Google / YT Music</span>
+            <span>{t.settings.signInGoogle}</span>
           </button>
         )}
 
@@ -126,7 +141,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
           className="w-full py-2 px-3 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          <span>Importar de Spotify / Apple Music</span>
+          <span>{t.settings.importMusic}</span>
         </button>
       </div>
 
@@ -134,10 +149,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       <div className="pb-3 border-b border-white/10">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
           <Palette className="w-3.5 h-3.5 text-violet-400" />
-          <span>Color del Reproductor</span>
+          <span>{t.settings.playerColor}</span>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
-          {THEME_OPTIONS.map((item) => (
+          {themeOptions.map((item) => (
             <button
               key={item.id}
               onClick={() => onSelectThemeMode(item.id)}
@@ -162,10 +177,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
             <AISearchIcon className="w-3.5 h-3.5 text-violet-400" />
-            <span>Motor IA (Gemini)</span>
+            <span>{t.settings.aiEngine}</span>
           </div>
           <span className="text-[10px] text-neutral-400 font-medium">
-            {hasSavedKey ? 'API Key activa' : 'Por defecto (Sin Key)'}
+            {hasSavedKey ? t.settings.aiKeyActive : t.settings.aiDefaultNoKey}
           </span>
         </div>
         <div className="flex gap-1.5">
@@ -175,7 +190,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
               type="password"
               value={apiKeyInput}
               onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder="Gemini API Key (Opcional)..."
+              placeholder={t.settings.aiKeyPlaceholder}
               className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-2 py-1.5 text-[11px] text-white placeholder-neutral-500 outline-none focus:border-white/30"
             />
           </div>
@@ -183,7 +198,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
             onClick={handleSaveApiKey}
             className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[11px] font-semibold cursor-pointer"
           >
-            {savedNotice ? 'Listo' : 'Guardar'}
+            {savedNotice ? t.settings.saved : t.settings.save}
           </button>
         </div>
       </div>
@@ -192,10 +207,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       <div className="pb-3 border-b border-white/10">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
           <Sliders className="w-3.5 h-3.5 text-violet-400" />
-          <span>Ecualizador en Tiempo Real</span>
+          <span>{t.settings.equalizer}</span>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
-          {PRESET_OPTIONS.map((item) => (
+          {presetOptions.map((item) => (
             <button
               key={item.id}
               onClick={() => onSelectPreset(item.id)}
@@ -212,12 +227,12 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         </div>
       </div>
 
-      {/* AdBlocker & Shortcuts Info */}
+      {/* AdBlocker, Language & Shortcuts Info */}
       <div className="space-y-2 text-xs">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-neutral-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Bloqueador de anuncios y cortes</span>
+            <span>{t.settings.adBlocker}</span>
           </div>
           <button
             onClick={onToggleAutoSkipAds}
@@ -225,12 +240,34 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
               autoSkipAds ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-neutral-400'
             }`}
           >
-            {autoSkipAds ? 'Activo' : 'Pausado'}
+            {autoSkipAds ? t.settings.active : t.settings.paused}
           </button>
         </div>
 
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-neutral-300">
+            <Globe className="w-4 h-4 text-violet-400" />
+            <span>{t.settings.language}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {langOptions.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setPreference(opt.id)}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer transition ${
+                  preference === opt.id
+                    ? 'bg-white/20 text-white'
+                    : 'bg-white/5 text-neutral-400 hover:text-white'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="p-2 rounded-xl bg-white/5 border border-white/5 text-[11px] text-neutral-400 flex items-center justify-between">
-          <span>Atajos físicos de Mac</span>
+          <span>{t.settings.macShortcuts}</span>
           <span className="font-mono text-white">F7 ⏮ · F8 ⏯ · F9 ⏭</span>
         </div>
       </div>
