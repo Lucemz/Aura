@@ -278,6 +278,8 @@ enum YouTubeEnhancerScripts {
         aiRecommendSongs: (prompt) => callNative('aiRecommendSongs', { prompt }),
         getAiApiKey: () => callNative('getAiApiKey'),
         setAiApiKey: (apiKey) => callNative('setAiApiKey', { apiKey }),
+        getAiStatus: () => callNative('getAiStatus'),
+        saveAiConfig: (model, apiKey) => callNative('saveAiConfig', { model, apiKey }),
         likeSongOnYouTubeMusic: (videoId) => callNative('likeSongOnYouTubeMusic', { videoId }),
         createPlaylistOnYouTubeMusic: (title, description, videoIds = []) =>
           callNative('createPlaylistOnYouTubeMusic', { title, description, videoIds }),

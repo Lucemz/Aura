@@ -5,85 +5,278 @@ import WebKit
 final class AISearchService {
     static let shared = AISearchService()
 
+    struct ModelSpec {
+        let id: String
+        let displayName: String
+        let provider: String
+        let requiresKey: Bool
+        let dailyLimit: Int
+        let rpmLimit: Int
+    }
+
+    static let availableModels: [String: ModelSpec] = [
+        "free-default": ModelSpec(
+            id: "free-default",
+            displayName: "GPT-OSS 20B (Free)",
+            provider: "pollinations",
+            requiresKey: false,
+            dailyLimit: 100,
+            rpmLimit: 15
+        ),
+        "gemini-2.5-flash": ModelSpec(
+            id: "gemini-2.5-flash",
+            displayName: "Gemini 2.5 Flash",
+            provider: "gemini",
+            requiresKey: true,
+            dailyLimit: 500,
+            rpmLimit: 15
+        ),
+        "gemini-2.5-pro": ModelSpec(
+            id: "gemini-2.5-pro",
+            displayName: "Gemini 2.5 Pro",
+            provider: "gemini",
+            requiresKey: true,
+            dailyLimit: 100,
+            rpmLimit: 5
+        ),
+        "gpt-4o-mini": ModelSpec(
+            id: "gpt-4o-mini",
+            displayName: "OpenAI GPT-4o mini",
+            provider: "openai",
+            requiresKey: true,
+            dailyLimit: 500,
+            rpmLimit: 60
+        ),
+        "llama-3.3-70b": ModelSpec(
+            id: "llama-3.3-70b",
+            displayName: "Groq Llama 3.3 70B",
+            provider: "groq",
+            requiresKey: true,
+            dailyLimit: 1000,
+            rpmLimit: 30
+        ),
+    ]
+
     private var systemInstruction: String {
-        let langNote = AppConfig.isSpanishSystem
-            ? "Write the 'reason' field in the same language as the user's prompt (defaulting to Spanish)."
-            : "Write the 'reason' field in the same language as the user's prompt (defaulting to English)."
+        let lang = AppConfig.isSpanishSystem ? "Spanish" : "English"
         return """
-        You are Aura AI, an expert music curator. The user will describe what they are doing, how they feel, or what atmosphere they want.
-        Do NOT perform a literal keyword match. Reason about real songs that best fit that mood, activity, tempo, and energy.
-        \(langNote)
-        Return ONLY a valid JSON array of 8 recommended songs with no extra text or markdown blocks, matching this exact schema:
-        [
-          {
-            "title": "Exact song title",
-            "artist": "Artist name",
-            "reason": "Short explanation (max 10 words) of why it fits"
-          }
-        ]
+        Return ONLY a valid JSON array of 8 real songs matching the user's mood, activity, or genre request. Write 'reason' in the same language as the user's prompt (default \(lang), max 10 words). No markdown:
+        [{"title":"Song Title","artist":"Artist Name","reason":"Short reason"}]
         """
     }
 
-    // MARK: - Persistent Gemini API Key Management (stored in ~/Library/Application Support/Aura/aura-settings.json)
+    private func todayKey() -> String {
+        let fmt = DateFormatter()
+        fmt.calendar = Calendar(identifier: .gregorian)
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: Date())
+    }
+
+    // MARK: - Settings & 7-Day Pruned Telemetry Persistence
+
+    private func loadRawSettings() -> [String: Any] {
+        guard let data = try? Data(contentsOf: AppConfig.settingsFileURL),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        json = pruneOldTelemetry(in: json)
+        return json
+    }
+
+    private func saveRawSettings(_ settings: [String: Any]) {
+        let pruned = pruneOldTelemetry(in: settings)
+        if let outData = try? JSONSerialization.data(withJSONObject: pruned, options: [.prettyPrinted]) {
+            try? outData.write(to: AppConfig.settingsFileURL, options: .atomic)
+        }
+    }
+
+    /// Keeps only the most recent 7 days of telemetry in `dailyUsage`
+    private func pruneOldTelemetry(in settings: [String: Any]) -> [String: Any] {
+        var copy = settings
+        guard let daily = copy["dailyUsage"] as? [String: [String: Any]] else {
+            return copy
+        }
+        let sortedDates = daily.keys.sorted(by: >)
+        if sortedDates.count > 7 {
+            var trimmed: [String: [String: Any]] = [:]
+            for dateKey in sortedDates.prefix(7) {
+                if let val = daily[dateKey] {
+                    trimmed[dateKey] = val
+                }
+            }
+            copy["dailyUsage"] = trimmed
+        }
+        return copy
+    }
 
     func getGeminiApiKey() -> String {
-        guard let data = try? Data(contentsOf: AppConfig.settingsFileURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let key = json["geminiApiKey"] as? String else {
-            return ""
-        }
+        let json = loadRawSettings()
+        let key = (json["apiKey"] as? String) ?? (json["geminiApiKey"] as? String) ?? ""
         return key.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func setGeminiApiKey(_ key: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        var current: [String: Any] = [:]
-        if let data = try? Data(contentsOf: AppConfig.settingsFileURL),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            current = json
-        }
+        var current = loadRawSettings()
+        current["apiKey"] = trimmed
         current["geminiApiKey"] = trimmed
-        if let outData = try? JSONSerialization.data(withJSONObject: current, options: [.prettyPrinted]) {
-            try? outData.write(to: AppConfig.settingsFileURL, options: .atomic)
-            return true
+
+        // Auto-select matching model family when user pastes or clears an API key
+        if trimmed.isEmpty {
+            current["selectedModel"] = "free-default"
+        } else if trimmed.hasPrefix("AIza") {
+            let curModel = (current["selectedModel"] as? String) ?? "free-default"
+            if !curModel.hasPrefix("gemini-") {
+                current["selectedModel"] = "gemini-2.5-flash"
+            }
+        } else if trimmed.hasPrefix("gsk_") {
+            current["selectedModel"] = "llama-3.3-70b"
+        } else if trimmed.hasPrefix("sk-") {
+            current["selectedModel"] = "gpt-4o-mini"
         }
-        return false
+
+        saveRawSettings(current)
+        return true
     }
 
-    // MARK: - Semantic AI Song Recommendation + Parallel YouTube Music Resolution
+    func saveAiConfig(model: String, apiKey: String) -> [String: Any] {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        var current = loadRawSettings()
+        current["apiKey"] = trimmedKey
+        current["geminiApiKey"] = trimmedKey
+
+        let validModel = Self.availableModels[model] != nil ? model : "free-default"
+        current["selectedModel"] = validModel
+        saveRawSettings(current)
+        return getAiStatus()
+    }
+
+    func getAiStatus() -> [String: Any] {
+        let settings = loadRawSettings()
+        let apiKey = ((settings["apiKey"] as? String) ?? (settings["geminiApiKey"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var selectedModel = (settings["selectedModel"] as? String) ?? (apiKey.isEmpty ? "free-default" : "gemini-2.5-flash")
+        if Self.availableModels[selectedModel] == nil {
+            selectedModel = "free-default"
+        }
+
+        let spec = Self.availableModels[selectedModel] ?? Self.availableModels["free-default"]!
+        let effectiveModelId = (spec.requiresKey && apiKey.isEmpty) ? "free-default" : spec.id
+        let effectiveSpec = Self.availableModels[effectiveModelId]!
+
+        let today = todayKey()
+        let daily = (settings["dailyUsage"] as? [String: [String: Any]]) ?? [:]
+        let todayEntry = daily[today] ?? [:]
+        let byModel = (todayEntry["byModel"] as? [String: [String: Any]]) ?? [:]
+        let modelUsage = byModel[effectiveModelId] ?? [:]
+
+        let requestsToday = (modelUsage["requests"] as? Int) ?? 0
+        let tokensToday = (modelUsage["tokens"] as? Int) ?? 0
+        let lastTokens = (todayEntry["lastTokens"] as? Int) ?? 0
+
+        var tokens7Days = 0
+        var requests7Days = 0
+        for (_, dayInfo) in daily {
+            tokens7Days += (dayInfo["tokens"] as? Int) ?? 0
+            requests7Days += (dayInfo["requests"] as? Int) ?? 0
+        }
+
+        let remainingQuota = max(0, effectiveSpec.dailyLimit - requestsToday)
+
+        return [
+            "selectedModel": selectedModel,
+            "activeModel": effectiveSpec.id,
+            "activeModelName": effectiveSpec.displayName,
+            "provider": effectiveSpec.provider,
+            "hasApiKey": !apiKey.isEmpty,
+            "apiKey": apiKey,
+            "usingApiKey": effectiveSpec.requiresKey && !apiKey.isEmpty,
+            "requestsToday": requestsToday,
+            "dailyQuotaLimit": effectiveSpec.dailyLimit,
+            "remainingQuota": remainingQuota,
+            "rpmLimit": effectiveSpec.rpmLimit,
+            "tokensToday": tokensToday,
+            "lastTokens": lastTokens,
+            "tokensLast7Days": tokens7Days,
+            "requestsLast7Days": requests7Days,
+            "trackedDaysCount": daily.keys.count,
+        ]
+    }
+
+    private func recordTelemetry(modelId: String, tokensUsed: Int) {
+        var settings = loadRawSettings()
+        let today = todayKey()
+        var daily = (settings["dailyUsage"] as? [String: [String: Any]]) ?? [:]
+        var todayEntry = daily[today] ?? [:]
+
+        let totalReq = ((todayEntry["requests"] as? Int) ?? 0) + 1
+        let totalTok = ((todayEntry["tokens"] as? Int) ?? 0) + tokensUsed
+        todayEntry["requests"] = totalReq
+        todayEntry["tokens"] = totalTok
+        todayEntry["lastTokens"] = tokensUsed
+
+        var byModel = (todayEntry["byModel"] as? [String: [String: Any]]) ?? [:]
+        var modelEntry = byModel[modelId] ?? [:]
+        modelEntry["requests"] = ((modelEntry["requests"] as? Int) ?? 0) + 1
+        modelEntry["tokens"] = ((modelEntry["tokens"] as? Int) ?? 0) + tokensUsed
+        byModel[modelId] = modelEntry
+        todayEntry["byModel"] = byModel
+
+        daily[today] = todayEntry
+        settings["dailyUsage"] = daily
+        saveRawSettings(settings)
+    }
+
+    // MARK: - Semantic AI Song Recommendation (Strict AI Only — No YT Search Fallback)
 
     func recommendSongs(prompt: String, in webView: WKWebView) async -> [String: Any] {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPrompt.isEmpty else {
-            return ["ok": false, "error": "Escribe qué estás haciendo o qué tipo de música buscas.", "songs": []]
+            return ["ok": false, "error": "Empty prompt.", "songs": []]
         }
 
-        let apiKey = getGeminiApiKey()
-        var rawSuggestions: [[String: String]] = []
-        var providerUsed = "gemini-default"
+        let status = getAiStatus()
+        let activeModelId = (status["activeModel"] as? String) ?? "free-default"
+        let apiKey = (status["apiKey"] as? String) ?? ""
 
-        if !apiKey.isEmpty {
-            if let geminiList = await fetchFromGeminiOfficial(prompt: cleanPrompt, apiKey: apiKey), !geminiList.isEmpty {
-                rawSuggestions = geminiList
-                providerUsed = "gemini-api-key"
-            }
+        let result: (songs: [[String: String]]?, tokens: Int, error: String?)
+        switch activeModelId {
+        case "gemini-2.5-flash", "gemini-2.5-pro":
+            result = await fetchFromGeminiOfficial(prompt: cleanPrompt, model: activeModelId, apiKey: apiKey)
+        case "gpt-4o-mini":
+            result = await fetchFromOpenAICompatible(
+                endpoint: "https://api.openai.com/v1/chat/completions",
+                model: "gpt-4o-mini",
+                apiKey: apiKey,
+                prompt: cleanPrompt
+            )
+        case "llama-3.3-70b":
+            result = await fetchFromOpenAICompatible(
+                endpoint: "https://api.groq.com/openai/v1/chat/completions",
+                model: "llama-3.3-70b-versatile",
+                apiKey: apiKey,
+                prompt: cleanPrompt
+            )
+        default:
+            result = await fetchFromDefaultKeylessAI(prompt: cleanPrompt)
         }
 
-        if rawSuggestions.isEmpty {
-            if let keylessList = await fetchFromDefaultKeylessAI(prompt: cleanPrompt), !keylessList.isEmpty {
-                rawSuggestions = keylessList
-            }
-        }
-
-        guard !rawSuggestions.isEmpty else {
+        guard let rawSuggestions = result.songs, !rawSuggestions.isEmpty else {
             return [
                 "ok": false,
-                "error": "No se pudo obtener recomendaciones en este momento. Intenta de nuevo.",
+                "error": result.error ?? (AppConfig.isSpanishSystem
+                    ? "El modelo de IA no pudo responder en este momento. Verifica tu cuota o intenta de nuevo."
+                    : "The AI model could not respond right now. Check your quota or try again."),
                 "songs": [],
             ]
         }
 
-        // Resolve each AI-recommended song on YouTube Music in parallel to obtain exact videoId & artwork
+        let estimatedTokens = result.tokens > 0
+            ? result.tokens
+            : max(120, (cleanPrompt.count / 3) + (rawSuggestions.count * 28))
+        recordTelemetry(modelId: activeModelId, tokensUsed: estimatedTokens)
+
+        // Resolve each AI-recommended song on YouTube Music to attach its videoId & artwork
         var resolvedSongs: [[String: Any]] = []
         for item in rawSuggestions.prefix(8) {
             let title = item["title"] ?? ""
@@ -106,22 +299,31 @@ final class AISearchService {
 
         return [
             "ok": true,
-            "provider": providerUsed,
+            "provider": activeModelId,
+            "tokensUsed": estimatedTokens,
             "songs": resolvedSongs,
+            "status": getAiStatus(),
         ]
     }
 
-    // MARK: - Official Google Gemini 2.5 Flash Free Tier Endpoint
+    // MARK: - Provider 1: Official Google Gemini (2.5 Flash / 2.5 Pro)
 
-    private func fetchFromGeminiOfficial(prompt: String, apiKey: String) async -> [[String: String]]? {
+    private func fetchFromGeminiOfficial(
+        prompt: String,
+        model: String,
+        apiKey: String
+    ) async -> (songs: [[String: String]]?, tokens: Int, error: String?) {
+        guard !apiKey.isEmpty else {
+            return (nil, 0, AppConfig.isSpanishSystem ? "Configura tu API Key de Gemini primero." : "Configure your Gemini API Key first.")
+        }
         guard let encodedKey = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\(encodedKey)") else {
-            return nil
+              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(encodedKey)") else {
+            return (nil, 0, "Invalid Gemini URL.")
         }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 20
+        req.timeoutInterval = 22
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
@@ -136,6 +338,7 @@ final class AISearchService {
             ],
             "generationConfig": [
                 "temperature": 0.7,
+                "maxOutputTokens": 1024,
                 "responseMimeType": "application/json",
             ],
         ]
@@ -143,33 +346,105 @@ final class AISearchService {
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         guard let (data, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let candidates = root["candidates"] as? [[String: Any]],
-              let content = candidates.first?["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]],
-              let text = parts.first?["text"] as? String else {
-            return nil
+              let http = response as? HTTPURLResponse else {
+            return (nil, 0, AppConfig.isSpanishSystem ? "Sin conexión con Google Gemini." : "Connection to Google Gemini failed.")
         }
 
-        return parseSongArrayJSON(from: text)
+        let root = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if !(200...299).contains(http.statusCode) {
+            let apiErr = ((root["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(http.statusCode)"
+            return (nil, 0, "Gemini: \(apiErr)")
+        }
+
+        let usageMeta = (root["usageMetadata"] as? [String: Any]) ?? [:]
+        let totalTokens = (usageMeta["totalTokenCount"] as? Int) ?? 0
+
+        guard let candidates = root["candidates"] as? [[String: Any]],
+              let content = candidates.first?["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]],
+              let text = parts.first?["text"] as? String,
+              let songs = parseSongArrayJSON(from: text) else {
+            return (nil, totalTokens, AppConfig.isSpanishSystem ? "Respuesta inválida de Gemini." : "Invalid response from Gemini.")
+        }
+
+        return (songs, totalTokens, nil)
     }
 
-    // MARK: - Default Keyless AI Endpoint (Zero API Key Required)
+    // MARK: - Provider 2: OpenAI / Groq Compatible Endpoint
 
-    private func fetchFromDefaultKeylessAI(prompt: String) async -> [[String: String]]? {
-        guard let url = URL(string: "https://text.pollinations.ai/openai") else {
-            return nil
+    private func fetchFromOpenAICompatible(
+        endpoint: String,
+        model: String,
+        apiKey: String,
+        prompt: String
+    ) async -> (songs: [[String: String]]?, tokens: Int, error: String?) {
+        guard !apiKey.isEmpty else {
+            return (nil, 0, AppConfig.isSpanishSystem ? "Falta colocar la API Key para este modelo." : "API Key required for this model.")
+        }
+        guard let url = URL(string: endpoint) else {
+            return (nil, 0, "Invalid endpoint URL.")
         }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 20
+        req.timeoutInterval = 22
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let payload: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": systemInstruction],
+                ["role": "user", "content": prompt],
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024,
+        ]
+
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse else {
+            return (nil, 0, AppConfig.isSpanishSystem ? "Error de red con el proveedor de IA." : "Network error contacting AI provider.")
+        }
+
+        let root = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if !(200...299).contains(http.statusCode) {
+            let apiErr = ((root["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(http.statusCode)"
+            return (nil, 0, apiErr)
+        }
+
+        let usage = (root["usage"] as? [String: Any]) ?? [:]
+        let totalTokens = (usage["total_tokens"] as? Int) ?? 0
+
+        guard let choices = root["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              let songs = parseSongArrayJSON(from: content) else {
+            return (nil, totalTokens, AppConfig.isSpanishSystem ? "Formato inválido del modelo." : "Invalid model output format.")
+        }
+
+        return (songs, totalTokens, nil)
+    }
+
+    // MARK: - Provider 3: Default Keyless AI Endpoint (GPT-OSS 20B with low reasoning effort)
+
+    private func fetchFromDefaultKeylessAI(
+        prompt: String
+    ) async -> (songs: [[String: String]]?, tokens: Int, error: String?) {
+        guard let url = URL(string: "https://text.pollinations.ai/openai") else {
+            return (nil, 0, "Invalid URL")
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 22
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
-            "model": "openai",
+            "model": "openai-fast",
+            "reasoning_effort": "low",
+            "max_tokens": 2048,
             "messages": [
                 ["role": "system", "content": systemInstruction],
                 ["role": "user", "content": prompt],
@@ -180,16 +455,27 @@ final class AISearchService {
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         guard let (data, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            return nil
+              let http = response as? HTTPURLResponse else {
+            return (nil, 0, AppConfig.isSpanishSystem ? "El servidor gratuito de IA no respondió." : "Free AI server did not respond.")
         }
 
-        return parseSongArrayJSON(from: content)
+        let root = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if !(200...299).contains(http.statusCode) {
+            let apiErr = ((root["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(http.statusCode)"
+            return (nil, 0, apiErr)
+        }
+
+        let usage = (root["usage"] as? [String: Any]) ?? [:]
+        let totalTokens = (usage["total_tokens"] as? Int) ?? 0
+
+        guard let choices = root["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              let songs = parseSongArrayJSON(from: content) else {
+            return (nil, totalTokens, AppConfig.isSpanishSystem ? "No se pudo interpretar la respuesta de la IA." : "Could not parse AI response.")
+        }
+
+        return (songs, totalTokens, nil)
     }
 
     // MARK: - JSON Extraction Helper

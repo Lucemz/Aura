@@ -10,6 +10,9 @@
     <img src="https://img.shields.io/badge/Bundle%20Size-2.0%20MB-10b981?style=flat-square" alt="Bundle Size" />
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
   </p>
+
+  <br />
+  <img src="docs/assets/aura-player-juno.png" alt="Aura macOS Player Interface" width="900" />
 </div>
 
 ---
@@ -29,10 +32,15 @@ Unlike Chromium/Electron wrappers that consume hundreds of megabytes of RAM and 
 - **100% Untouched Audio & Video Quality:** Streams at original default quality without downsampling or transcoding.
 - **Background Eco-Mode:** Automatically pauses decorative CSS transitions when the window is unfocused, reducing GPU/CPU usage to near zero while keeping background playback pristine.
 
-### 2. Semantic AI Music Search (`Aura AI`)
-- Describe what you are doing, your mood, or your environment (e.g., *"I'm coding late at night and need motivating music"*).
-- Instead of performing a literal keyword search, Aura reasons about tracks that match the vibe, resolves their official YouTube Music `videoId` and artwork in parallel, and plays any track on click.
-- **Works Out-of-the-Box (Keyless Default) + Optional Gemini 2.5 Flash API Key:** Works immediately with zero configuration, or optionally connect your own free-tier Google Gemini API Key in Settings.
+### 2. Multi-Model Semantic AI Music Search (`Aura AI`)
+- Describe what you are doing, your mood, or your atmosphere (e.g., *"I'm coding late at night and need motivating music"*).
+- Instead of performing a literal keyword search, Aura's AI engine reasons about tracks that fit your vibe, resolves their official YouTube Music `videoId` and artwork, and starts playback immediately when clicked.
+- **Multi-Model Support + Live Quota & Token Telemetry (7-Day Rolling Window):**
+  - **GPT-OSS 20B (Free Keyless Default)** — Works out-of-the-box with zero API key required.
+  - **Google Gemini 2.5 Flash & Gemini 2.5 Pro** (`AIza...`)
+  - **OpenAI GPT-4o mini** (`sk-...`)
+  - **Groq Llama 3.3 70B** (`gsk_...`)
+  - Built-in quota bar and token usage tracker in Settings (automatically pruned to a maximum 7-day rolling window so local storage stays tiny).
 
 <div align="center">
   <img src="docs/assets/ai-search-preview.png" alt="Aura AI Search Modal" width="680" />

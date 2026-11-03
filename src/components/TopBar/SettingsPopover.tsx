@@ -9,8 +9,9 @@ import {
   RefreshCw,
   Palette,
   Globe,
+  Cpu,
 } from 'lucide-react';
-import { AudioPreset, UserProfile } from '../../types';
+import { AudioPreset, UserProfile, AIModelId, AIStatusInfo } from '../../types';
 import { AISearchIcon } from '../AISearch/AISearchIcon';
 import { useI18n, LocalePreference } from '../../i18n';
 
@@ -29,6 +30,14 @@ interface SettingsPopoverProps {
   onToggleAutoSkipAds: () => void;
 }
 
+const AI_MODEL_OPTIONS: { id: AIModelId; label: string; hint: string }[] = [
+  { id: 'free-default', label: 'GPT-OSS 20B (Free Keyless)', hint: '100 req/day' },
+  { id: 'gemini-2.5-flash', label: 'Google Gemini 2.5 Flash', hint: '500 req/day' },
+  { id: 'gemini-2.5-pro', label: 'Google Gemini 2.5 Pro', hint: '100 req/day' },
+  { id: 'gpt-4o-mini', label: 'OpenAI GPT-4o mini', hint: '500 req/day' },
+  { id: 'llama-3.3-70b', label: 'Groq Llama 3.3 70B', hint: '1,000 req/day' },
+];
+
 export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   ytmProfile,
   audioPreset,
@@ -42,8 +51,9 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   onToggleAutoSkipAds,
 }) => {
   const { t, preference, setPreference } = useI18n();
+  const [selectedModel, setSelectedModel] = useState<AIModelId>('free-default');
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [hasSavedKey, setHasSavedKey] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AIStatusInfo | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
 
   const presetOptions: { id: AudioPreset; label: string }[] = [
@@ -73,27 +83,64 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   ];
 
   useEffect(() => {
-    if (window.auraAPI?.getAiApiKey) {
-      window.auraAPI.getAiApiKey().then((key) => {
-        if (key) {
-          setApiKeyInput(key);
-          setHasSavedKey(true);
+    if (window.auraAPI?.getAiStatus) {
+      window.auraAPI.getAiStatus().then((st) => {
+        if (st) {
+          setAiStatus(st);
+          setSelectedModel(st.selectedModel || 'free-default');
+          setApiKeyInput(st.apiKey || '');
         }
+      });
+    } else if (window.auraAPI?.getAiApiKey) {
+      window.auraAPI.getAiApiKey().then((key) => {
+        if (key) setApiKeyInput(key);
       });
     }
   }, []);
 
-  const handleSaveApiKey = async () => {
-    if (!window.auraAPI?.setAiApiKey) return;
-    const trimmed = apiKeyInput.trim();
-    await window.auraAPI.setAiApiKey(trimmed);
-    setHasSavedKey(Boolean(trimmed));
+  const persistAiSettings = async (nextModel: AIModelId, nextKey: string) => {
+    const trimmed = nextKey.trim();
+    if (window.auraAPI?.saveAiConfig) {
+      const updated = await window.auraAPI.saveAiConfig(nextModel, trimmed);
+      if (updated) {
+        setAiStatus(updated);
+        setSelectedModel(updated.selectedModel);
+      }
+    } else if (window.auraAPI?.setAiApiKey) {
+      await window.auraAPI.setAiApiKey(trimmed);
+    }
     setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 1800);
+    setTimeout(() => setSavedNotice(false), 1600);
   };
 
+  const handleModelChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextModel = e.target.value as AIModelId;
+    setSelectedModel(nextModel);
+    await persistAiSettings(nextModel, apiKeyInput);
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmed = apiKeyInput.trim();
+    let targetModel = selectedModel;
+    if (!trimmed) {
+      targetModel = 'free-default';
+    } else if (trimmed.startsWith('AIza') && !targetModel.startsWith('gemini-')) {
+      targetModel = 'gemini-2.5-flash';
+    } else if (trimmed.startsWith('gsk_')) {
+      targetModel = 'llama-3.3-70b';
+    } else if (trimmed.startsWith('sk-')) {
+      targetModel = 'gpt-4o-mini';
+    }
+    setSelectedModel(targetModel);
+    await persistAiSettings(targetModel, trimmed);
+  };
+
+  const dailyLimit = aiStatus?.dailyQuotaLimit || 100;
+  const remainingQuota = aiStatus?.remainingQuota ?? dailyLimit;
+  const quotaPercent = Math.min(100, Math.max(0, Math.round((remainingQuota / dailyLimit) * 100)));
+
   return (
-    <div className="absolute right-0 top-9 w-80 bg-[#181818]/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5">
+    <div className="absolute right-0 top-9 w-[340px] bg-[#181818]/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5 max-h-[86vh] overflow-y-auto">
       {/* Account & Library Section */}
       <div className="pb-3 border-b border-white/10 space-y-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
@@ -172,17 +219,41 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         </div>
       </div>
 
-      {/* Gemini AI Configuration */}
-      <div className="pb-3 border-b border-white/10 space-y-2">
+      {/* Multi-Model AI Engine & Quota Telemetry (Max 7-day rolling storage) */}
+      <div className="pb-3 border-b border-white/10 space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
             <AISearchIcon className="w-3.5 h-3.5 text-violet-400" />
             <span>{t.settings.aiEngine}</span>
           </div>
-          <span className="text-[10px] text-neutral-400 font-medium">
-            {hasSavedKey ? t.settings.aiKeyActive : t.settings.aiDefaultNoKey}
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+              aiStatus?.usingApiKey
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+            }`}
+          >
+            {aiStatus?.usingApiKey ? t.settings.aiKeyActive : t.settings.aiDefaultNoKey}
           </span>
         </div>
+
+        {/* Model Selector */}
+        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
+          <Cpu className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+          <select
+            value={selectedModel}
+            onChange={handleModelChange}
+            className="flex-1 bg-transparent text-[11px] font-medium text-white outline-none cursor-pointer"
+          >
+            {AI_MODEL_OPTIONS.map((m) => (
+              <option key={m.id} value={m.id} className="bg-[#181818] text-white">
+                {m.label} ({m.hint})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* API Key Input */}
         <div className="flex gap-1.5">
           <div className="relative flex-1">
             <KeyRound className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-2" />
@@ -200,6 +271,36 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
           >
             {savedNotice ? t.settings.saved : t.settings.save}
           </button>
+        </div>
+
+        {/* Live Quota & Token Telemetry Box */}
+        <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-neutral-400">{t.settings.aiQuotaLabel}</span>
+            <span className="font-mono font-semibold text-white">
+              {remainingQuota} / {dailyLimit} req ({quotaPercent}%)
+            </span>
+          </div>
+          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all"
+              style={{ width: `${quotaPercent}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-0.5">
+            <span>
+              {t.settings.aiTokensTodayLabel}:{' '}
+              <strong className="text-neutral-200 font-mono">
+                {(aiStatus?.tokensToday || 0).toLocaleString()} tk
+              </strong>
+            </span>
+            <span>
+              {t.settings.aiTokens7dLabel}:{' '}
+              <strong className="text-neutral-200 font-mono">
+                {(aiStatus?.tokensLast7Days || 0).toLocaleString()} tk
+              </strong>
+            </span>
+          </div>
         </div>
       </div>
 

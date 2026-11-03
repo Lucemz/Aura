@@ -68,8 +68,36 @@ export interface AISongRecommendation {
 export interface AISearchResponse {
   ok: boolean;
   provider?: string;
+  tokensUsed?: number;
   error?: string;
   songs: AISongRecommendation[];
+  status?: AIStatusInfo;
+}
+
+export type AIModelId =
+  | 'free-default'
+  | 'gemini-2.5-flash'
+  | 'gemini-2.5-pro'
+  | 'gpt-4o-mini'
+  | 'llama-3.3-70b';
+
+export interface AIStatusInfo {
+  selectedModel: AIModelId;
+  activeModel: AIModelId;
+  activeModelName: string;
+  provider: string;
+  hasApiKey: boolean;
+  apiKey: string;
+  usingApiKey: boolean;
+  requestsToday: number;
+  dailyQuotaLimit: number;
+  remainingQuota: number;
+  rpmLimit: number;
+  tokensToday: number;
+  lastTokens: number;
+  tokensLast7Days: number;
+  requestsLast7Days: number;
+  trackedDaysCount: number;
 }
 
 declare global {
@@ -108,6 +136,8 @@ declare global {
       aiRecommendSongs?: (prompt: string) => Promise<AISearchResponse>;
       getAiApiKey?: () => Promise<string>;
       setAiApiKey?: (apiKey: string) => Promise<boolean>;
+      getAiStatus?: () => Promise<AIStatusInfo>;
+      saveAiConfig?: (model: AIModelId, apiKey: string) => Promise<AIStatusInfo>;
       likeSongOnYouTubeMusic: (videoId: string) => Promise<{ ok: boolean; error?: string }>;
       createPlaylistOnYouTubeMusic: (
         title: string,
