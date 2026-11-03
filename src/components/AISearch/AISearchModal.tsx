@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Play, Loader2, Heart, Check, AlertCircle } from 'lucide-react';
 import { AISongRecommendation } from '../../types';
 import { AISearchIcon } from './AISearchIcon';
@@ -20,10 +20,23 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
   const { t } = useI18n();
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStepIdx, setLoadingStepIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [songs, setSongs] = useState<AISongRecommendation[]>([]);
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingStepIdx(0);
+      return;
+    }
+    const stepsCount = t.aiSearch.loadingSteps?.length || 5;
+    const interval = setInterval(() => {
+      setLoadingStepIdx((prev) => (prev < stepsCount - 1 ? prev + 1 : prev));
+    }, 1650);
+    return () => clearInterval(interval);
+  }, [isLoading, t.aiSearch.loadingSteps]);
 
   if (!isOpen) return null;
 
@@ -33,6 +46,7 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
     if (!trimmed || isLoading) return;
 
     setIsLoading(true);
+    setLoadingStepIdx(0);
     setError(null);
 
     try {
@@ -67,6 +81,10 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
       setLikedIds((prev) => new Set(prev).add(videoId));
     }
   };
+
+  const loadingSteps = t.aiSearch.loadingSteps || [t.aiSearch.loading];
+  const currentStepText = loadingSteps[loadingStepIdx] || t.aiSearch.loading;
+  const progressPercent = Math.min(94, Math.round(((loadingStepIdx + 1) / loadingSteps.length) * 92));
 
   return (
     <div
@@ -127,9 +145,33 @@ export const AISearchModal: React.FC<AISearchModalProps> = ({
             )}
 
             {isLoading && (
-              <div className="py-10 flex items-center justify-center gap-2.5 text-[#aaa] text-xs">
-                <Loader2 className="w-4 h-4 animate-spin text-white" />
-                <span>{t.aiSearch.loading}</span>
+              <div className="py-9 px-6 flex flex-col items-center justify-center gap-3">
+                <div className="flex items-center gap-2.5 text-white text-[13px] font-medium transition-all duration-300">
+                  <Loader2 className="w-4 h-4 animate-spin text-violet-400 flex-shrink-0" />
+                  <span key={loadingStepIdx} className="animate-pulse">
+                    {currentStepText}
+                  </span>
+                </div>
+                <div className="w-56 h-1 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 transition-all duration-700 ease-out"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {loadingSteps.map((_, idx) => (
+                    <span
+                      key={idx}
+                      className={`h-1 rounded-full transition-all duration-300 ${
+                        idx === loadingStepIdx
+                          ? 'w-4 bg-violet-400'
+                          : idx < loadingStepIdx
+                          ? 'w-1.5 bg-white/40'
+                          : 'w-1.5 bg-white/10'
+                      }`}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
