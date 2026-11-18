@@ -2,72 +2,19 @@
   "name": "aura",
   "version": "2.0.0",
   "description": "Native macOS Music Player powered by Safari WebKit (Spatial Audio), AI Vibe Search, and Spotify/Apple Music Importer",
-  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "electron": "electron electron/main.cjs",
-    "app": "npm run build && electron electron/main.cjs",
     "dist": "bash macos/build-safari-release.sh",
-    "dist:safari": "bash macos/build-safari-release.sh",
-    "dist:electron": "npm run build && electron-builder --mac --arm64"
-  },
-  "build": {
-    "appId": "com.aura.music",
-    "productName": "Aura",
-    "copyright": "Copyright © 2026 Aura Music",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "dist/**/*"
-    ],
-    "mac": {
-      "icon": "build/icon.icns",
-      "category": "public.app-category.music",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
-      "identity": null
-    },
-    "dmg": {
-      "title": "Instalar Aura",
-      "icon": "build/icon.icns",
-      "contents": [
-        {
-          "x": 140,
-          "y": 180
-        },
-        {
-          "x": 380,
-          "y": 180,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ],
-      "window": {
-        "width": 540,
-        "height": 380
-      }
-    }
+    "dist:safari": "bash macos/build-safari-release.sh"
   },
   "keywords": [
     "ai",
     "music",
     "youtube",
     "gemini",
-    "electron",
     "macos"
   ],
   "author": "Antigravity",
@@ -77,8 +24,7 @@
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwind-merge": "^2.6.0",
-    "yt-search": "^2.11.1"
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -86,8 +32,6 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.2.1",
-    "electron-builder": "^26.18.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

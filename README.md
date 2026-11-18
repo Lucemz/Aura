@@ -30,16 +30,18 @@ Unlike Chromium/Electron wrappers that consume hundreds of megabytes of RAM and 
 ### 1. Native Apple Spatial Audio (`WKWebView` + `AVFoundation`)
 - Full support for **Spatialize Stereo** (*Fixed* and *Head Tracked*) in macOS Control Center with AirPods Pro, AirPods Max, and AirPods (3rd/4th Gen).
 - **100% Untouched Audio & Video Quality:** Streams at original default quality without downsampling or transcoding.
-- **Background Eco-Mode:** Automatically pauses decorative CSS transitions when the window is unfocused, reducing GPU/CPU usage to near zero while keeping background playback pristine.
+- **Scoped Polymer Style Engine & Instant-Click WebKit View:** Applies scoped CSS accent variables cleanly across YouTube Music's Polymer UI and enables `acceptsFirstMouse` so controls respond on the very first click even when the window is inactive.
 
 ### 2. Multi-Model Semantic AI Music Search (`Aura AI`)
 - Describe what you are doing, your mood, or your atmosphere (e.g., *"I'm coding late at night and need motivating music"*).
 - Instead of performing a literal keyword search, Aura's AI engine reasons about tracks that fit your vibe, resolves their official YouTube Music `videoId` and artwork, and starts playback immediately when clicked.
-- **Multi-Model Support + Live Quota & Token Telemetry (7-Day Rolling Window):**
-  - **GPT-OSS 20B (Free Keyless Default)** — Works out-of-the-box with zero API key required.
-  - **Google Gemini 2.5 Flash & Gemini 2.5 Pro** (`AIza...`)
-  - **OpenAI GPT-4o mini** (`sk-...`)
-  - **Groq Llama 3.3 70B** (`gsk_...`)
+- **Dynamic `/models` Discovery + Live Quota & Token Telemetry (7-Day Rolling Window):**
+  - **Pollinations (Free Keyless Default)** — Works out-of-the-box with zero API key required and dynamically discovers available free models.
+  - **Google Gemini (2.5 & 3.x)** (`AIza...`) — Dynamically lists your key's available Gemini models via `/models`.
+  - **OpenAI** (`sk-...`) — Dynamic `/models` discovery across your account's OpenAI models.
+  - **Groq** (`gsk_...`) — Dynamic `/models` discovery for ultra-fast Groq inference models.
+  - **Anthropic Claude** (`sk-ant-...`) — Dynamic `/models` discovery for Claude models.
+  - **OpenRouter** (`sk-or-...`) — Dynamic `/models` discovery plus live credit/usage balance tracking.
   - Built-in quota bar and token usage tracker in Settings (automatically pruned to a maximum 7-day rolling window so local storage stays tiny).
 
 <div align="center">
@@ -82,16 +84,16 @@ Aura/
 │       │   ├── SpotifyService.swift            # Spotify OAuth 2.0 PKCE & Pathfinder GraphQL client
 │       │   ├── AppleMusicService.swift         # Native macOS Music.app JXA batch reader
 │       │   ├── YouTubeMusicService.swift       # InnerTube track matcher & instant SPA playback
-│       │   └── AISearchService.swift           # Semantic AI curator (Keyless default + Gemini 2.5)
+│       │   └── AISearchService.swift           # Semantic AI curator (Keyless default + multi-provider APIs)
 │       └── UI/
-│           └── MainWindowController.swift      # Dual WKWebView compositor, Mini-Player & media keys
+│           └── MainWindowController.swift      # Dual WKWebView compositor & Mini-Player
 ├── src/
 │   ├── i18n/
 │   │   └── index.tsx                           # System-aware i18n provider (EN default / ES auto)
 │   ├── components/
 │   │   ├── TopBar/
 │   │   │   ├── TopNavigationBar.tsx            # Window-draggable navigation bar
-│   │   │   └── SettingsPopover.tsx             # Theme, EQ, Gemini API key, language & importer
+│   │   │   └── SettingsPopover.tsx             # Theme, EQ, multi-provider AI telemetry, language & importer
 │   │   ├── AISearch/
 │   │   │   ├── AISearchIcon.tsx                # Custom AI magnifying glass vector SVG
 │   │   │   └── AISearchModal.tsx               # Native YouTube Music-styled AI search modal
@@ -105,7 +107,7 @@ Aura/
 │   │   └── ytmBridgeService.ts                 # 3-band BiquadFilter EQ & InnerTube mutations
 │   ├── types/
 │   │   └── index.ts                            # TypeScript domain contracts
-│   ├── App.tsx                                 # Root application state & media key bindings
+│   ├── App.tsx                                 # Root application state & WebKit bridge coordination
 │   └── main.tsx                                # React root with I18nProvider
 └── build/
     ├── icon.icns                               # macOS AppBundle icon
