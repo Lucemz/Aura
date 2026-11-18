@@ -13,6 +13,7 @@ interface SpotifyUrlImporterViewProps {
   onParseUrl: (e: React.FormEvent) => void;
   onCustomPlaylistNameChange: (val: string) => void;
   onToggleTrackSelection: (idx: number) => void;
+  onToggleSelectAllTracks: (tracks: ImportedTrack[]) => void;
   onStartTransfer: (
     tracks: ImportedTrack[],
     destination: 'likes' | 'playlist',
@@ -30,6 +31,7 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
   onParseUrl,
   onCustomPlaylistNameChange,
   onToggleTrackSelection,
+  onToggleSelectAllTracks,
   onStartTransfer,
 }) => {
   const { t } = useI18n();
@@ -75,30 +77,49 @@ export const SpotifyUrlImporterView: React.FC<SpotifyUrlImporterViewProps> = ({
 
             <div className="flex items-center gap-2">
               <button
+                disabled={selectedTrackIndices.size === 0}
                 onClick={() => {
                   const chosen = urlParsedData.tracks.filter((_, i) =>
                     selectedTrackIndices.has(i)
                   );
                   onStartTransfer(chosen, 'playlist', customPlaylistName);
                 }}
-                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold cursor-pointer transition"
+                className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-semibold cursor-pointer transition"
               >
                 {t.importer.createPlaylistBtn} ({selectedTrackIndices.size})
               </button>
 
               <button
+                disabled={selectedTrackIndices.size === 0}
                 onClick={() => {
                   const chosen = urlParsedData.tracks.filter((_, i) =>
                     selectedTrackIndices.has(i)
                   );
                   onStartTransfer(chosen, 'likes');
                 }}
-                className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition"
+                className="px-3.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition"
               >
                 <Heart className="w-3.5 h-3.5 text-red-400 fill-current" />
                 <span>{t.importer.sendToLikesShort}</span>
               </button>
             </div>
+          </div>
+
+          <div className="flex items-center justify-between mb-2 px-1">
+            <button
+              onClick={() => onToggleSelectAllTracks(urlParsedData.tracks)}
+              className="text-xs text-neutral-300 hover:text-white flex items-center gap-1.5 cursor-pointer"
+            >
+              {selectedTrackIndices.size === urlParsedData.tracks.length &&
+              urlParsedData.tracks.length > 0 ? (
+                <CheckSquare className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <Square className="w-4 h-4 text-neutral-500" />
+              )}
+              <span>
+                {t.importer.selectAll} ({selectedTrackIndices.size} {t.importer.selected})
+              </span>
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-1 border border-white/10 rounded-xl p-2 bg-black/30">

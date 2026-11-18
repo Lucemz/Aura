@@ -20,7 +20,13 @@ export const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
   const [audioPreset, setAudioPreset] = useState<AudioPreset>('flat');
-  const [autoSkipAds, setAutoSkipAds] = useState(true);
+  const [autoSkipAds, setAutoSkipAds] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('__aura_auto_skip_ads') !== 'false';
+    } catch {
+      return true;
+    }
+  });
   const [themeMode, setThemeMode] = useState<PlayerThemeMode>(
     () => (localStorage.getItem('__aura_ui_theme_mode') as PlayerThemeMode) || 'dynamic'
   );
@@ -57,58 +63,34 @@ export const App: React.FC = () => {
     }
   }, [checkAuthStatus]);
 
-  // Connect Mac Media Keys (F7, F8, F9) directly to YouTube Music's player bar
+  // Sync autoSkipAds across separate WebKit origins (aura://app -> music.youtube.com)
   useEffect(() => {
-    if (!window.auraAPI?.onMediaKey) return;
-
-    const unsubPlay = window.auraAPI.onMediaKey('toggle-play', () => {
+    const syncAutoSkip = () => {
       evalInYouTubeMusic(
-        `
-        (function() {
-          const btn = document.querySelector('#play-pause-button');
-          if (btn) { btn.click(); return; }
-          const video = document.querySelector('video');
-          if (video) { video.paused ? video.play() : video.pause(); }
-        })();
-        `,
+        `window.__auraSetAutoSkipAds && window.__auraSetAutoSkipAds(${JSON.stringify(autoSkipAds)})`,
         webviewRef.current
       ).catch(() => {});
-    });
-
-    const unsubNext = window.auraAPI.onMediaKey('next', () => {
-      evalInYouTubeMusic(
-        `
-        (function() {
-          const btn = document.querySelector('.next-button');
-          if (btn) btn.click();
-        })();
-        `,
-        webviewRef.current
-      ).catch(() => {});
-    });
-
-    const unsubPrev = window.auraAPI.onMediaKey('previous', () => {
-      evalInYouTubeMusic(
-        `
-        (function() {
-          const btn = document.querySelector('.previous-button');
-          if (btn) btn.click();
-        })();
-        `,
-        webviewRef.current
-      ).catch(() => {});
-    });
-
-    return () => {
-      unsubPlay();
-      unsubNext();
-      unsubPrev();
     };
-  }, []);
+    syncAutoSkip();
+    const timer = setTimeout(syncAutoSkip, 2500);
+    return () => clearTimeout(timer);
+  }, [autoSkipAds]);
 
   const handleSelectPreset = (preset: AudioPreset) => {
     setAudioPreset(preset);
     applyEqualizerPresetInYTM(preset, webviewRef.current);
+  };
+
+  const handleToggleAutoSkipAds = () => {
+    const next = !autoSkipAds;
+    setAutoSkipAds(next);
+    try {
+      localStorage.setItem('__aura_auto_skip_ads', next ? 'true' : 'false');
+    } catch {}
+    evalInYouTubeMusic(
+      `window.__auraSetAutoSkipAds && window.__auraSetAutoSkipAds(${JSON.stringify(next)})`,
+      webviewRef.current
+    ).catch(() => {});
   };
 
   const handleSelectThemeMode = (mode: PlayerThemeMode) => {
@@ -117,7 +99,7 @@ export const App: React.FC = () => {
       localStorage.setItem('__aura_ui_theme_mode', mode);
     } catch {}
     evalInYouTubeMusic(
-      `window.__auraSetThemeMode && window.__auraSetThemeMode(${JSON.stringify(mode)});`,
+      `window.__auraSetThemeMode && window.__auraSetThemeMode(${JSON.stringify(mode)})`,
       webviewRef.current
     ).catch(() => {});
   };
@@ -232,7 +214,7 @@ export const App: React.FC = () => {
         onToggleMini={handleToggleMini}
         onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)}
         onSelectPreset={handleSelectPreset}
-        onToggleAutoSkipAds={() => setAutoSkipAds(!autoSkipAds)}
+        onToggleAutoSkipAds={handleToggleAutoSkipAds}
       />
 
       {isSafari ? (

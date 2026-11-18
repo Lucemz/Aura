@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Music, Link2, AlertCircle, RefreshCw } from 'lucide-react';
 import {
   ImportedTrack,
@@ -52,8 +52,15 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   } | null>(null);
   const [isParsingUrl, setIsParsingUrl] = useState(false);
 
-  // Selection State
-  const [selectedTrackIndices, setSelectedTrackIndices] = useState<Set<number>>(new Set());
+  // Per-tab Selection State
+  const [selectionByTab, setSelectionByTab] = useState<
+    Record<'spotify' | 'apple' | 'url', Set<number>>
+  >({
+    spotify: new Set(),
+    apple: new Set(),
+    url: new Set(),
+  });
+  const selectedTrackIndices = selectionByTab[sourceTab];
 
   // Transfer Progress State
   const [isTransferring, setIsTransferring] = useState(false);
@@ -61,7 +68,13 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
   const [customPlaylistName, setCustomPlaylistName] = useState('');
   const [transferLogs, setTransferLogs] = useState<TransferLogItem[]>([]);
   const [transferDone, setTransferDone] = useState(false);
+  const [wasCancelled, setWasCancelled] = useState(false);
   const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
+  const cancelTransferRef = useRef(false);
+
+  const setTabSelection = (tab: 'spotify' | 'apple' | 'url', next: Set<number>) => {
+    setSelectionByTab((prev) => ({ ...prev, [tab]: next }));
+  };
 
   // Automatically load cached Spotify library when modal opens
   useEffect(() => {
@@ -73,7 +86,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
         const cached = await window.auraAPI?.getCachedSpotify();
         if (!cancelled && cached && cached.ok) {
           setSpotifyData(cached);
-          setSelectedTrackIndices(new Set((cached.likedSongs || []).map((_, idx) => idx)));
+          setTabSelection('spotify', new Set((cached.likedSongs || []).map((_, idx) => idx)));
         }
       } catch {
         // Ignore if not yet connected
@@ -88,6 +101,13 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleCloseModal = () => {
+    if (isTransferring && !transferDone) {
+      cancelTransferRef.current = true;
+    }
+    onClose();
+  };
+
   const handleConnectSpotify = async (forceReauth = false) => {
     setStatusError(null);
     setIsConnecting(true);
@@ -95,12 +115,12 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       const res = await window.auraAPI?.connectSpotify(forceReauth);
       if (res && res.ok) {
         setSpotifyData(res);
-        setSelectedTrackIndices(new Set((res.likedSongs || []).map((_, idx) => idx)));
+        setTabSelection('spotify', new Set((res.likedSongs || []).map((_, idx) => idx)));
       } else {
-        setStatusError(res?.error || 'Could not authorize Spotify access.');
+        setStatusError(res?.error || t.importer.errorSpotifyAuth);
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Spotify authorization error.');
+      setStatusError(err.message || t.importer.errorSpotifyAuth);
     } finally {
       setIsConnecting(false);
     }
@@ -113,12 +133,12 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       const res = await window.auraAPI?.connectAppleMusic();
       if (res && res.ok) {
         setAppleData(res);
-        setSelectedTrackIndices(new Set((res.likedSongs || []).map((_, idx) => idx)));
+        setTabSelection('apple', new Set((res.likedSongs || []).map((_, idx) => idx)));
       } else {
-        setStatusError(res?.error || 'Could not read Mac Music app.');
+        setStatusError(res?.error || t.importer.errorAppleConnect);
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Error connecting to Mac Music app.');
+      setStatusError(err.message || t.importer.errorAppleConnect);
     } finally {
       setIsConnecting(false);
     }
@@ -137,12 +157,12 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
           tracks: res.tracks,
         });
         setCustomPlaylistName(res.title || 'Spotify Playlist');
-        setSelectedTrackIndices(new Set(res.tracks.map((_, idx) => idx)));
+        setTabSelection('url', new Set(res.tracks.map((_, idx) => idx)));
       } else {
-        setStatusError(res?.error || 'No tracks found at that link.');
+        setStatusError(res?.error || t.importer.errorNoTracksUrl);
       }
     } catch (err: any) {
-      setStatusError(err.message || 'Error parsing URL.');
+      setStatusError(err.message || t.importer.errorParseUrl);
     } finally {
       setIsParsingUrl(false);
     }
@@ -155,23 +175,25 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     } else {
       next.add(idx);
     }
-    setSelectedTrackIndices(next);
+    setTabSelection(sourceTab, next);
   };
 
   const toggleSelectAllTracks = (tracks: ImportedTrack[]) => {
     if (selectedTrackIndices.size === tracks.length) {
-      setSelectedTrackIndices(new Set());
+      setTabSelection(sourceTab, new Set());
     } else {
-      setSelectedTrackIndices(new Set(tracks.map((_, i) => i)));
+      setTabSelection(sourceTab, new Set(tracks.map((_, i) => i)));
     }
   };
 
   const startTransfer = async (
     tracksToTransfer: ImportedTrack[],
     destination: 'likes' | 'playlist',
-    playlistTitle = 'Imported Playlist'
+    playlistTitle = t.importer.defaultPlaylistName
   ) => {
     if (!tracksToTransfer.length) return;
+    cancelTransferRef.current = false;
+    setWasCancelled(false);
     setStatusError(null);
     setIsTransferring(true);
     setTransferDone(false);
@@ -189,6 +211,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
     const matchedVideoIds: string[] = [];
 
     for (let i = 0; i < tracksToTransfer.length; i++) {
+      if (cancelTransferRef.current) break;
       const track = tracksToTransfer[i];
 
       setTransferLogs((prev) =>
@@ -197,15 +220,17 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
 
       try {
         const match = await window.auraAPI?.searchYouTubeMusicTrack(track.title, track.artist);
+        if (cancelTransferRef.current) {
+          setTransferLogs((prev) =>
+            prev.map((item, idx) => (idx === i ? { ...item, status: 'pending' } : item))
+          );
+          break;
+        }
         if (match && match.videoId) {
           matchedVideoIds.push(match.videoId);
 
           if (destination === 'likes') {
-            let likedOk = await onLikeTrackInWebview(match.videoId);
-            if (!likedOk && window.auraAPI?.likeSongOnYouTubeMusic) {
-              const likeRes = await window.auraAPI.likeSongOnYouTubeMusic(match.videoId);
-              likedOk = Boolean(likeRes?.ok);
-            }
+            const likedOk = await onLikeTrackInWebview(match.videoId);
 
             setTransferLogs((prev) =>
               prev.map((item, idx) =>
@@ -215,7 +240,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                       status: likedOk ? 'synced' : 'failed',
                       matchedTitle: match.title,
                       videoId: match.videoId,
-                      error: likedOk ? undefined : 'Sign in to YouTube Music required',
+                      error: likedOk ? undefined : t.importer.errorSignInRequired,
                     }
                   : item
               )
@@ -237,7 +262,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
         } else {
           setTransferLogs((prev) =>
             prev.map((item, idx) =>
-              idx === i ? { ...item, status: 'failed', error: 'No match found on YTM' } : item
+              idx === i ? { ...item, status: 'failed', error: t.importer.errorNoMatchYtm } : item
             )
           );
         }
@@ -250,21 +275,13 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       }
     }
 
-    if (destination === 'playlist' && matchedVideoIds.length > 0) {
-      const finalTitle = playlistTitle.trim() || 'Imported Playlist';
-      const desc = 'Imported with Aura Music';
+    if (cancelTransferRef.current) {
+      setWasCancelled(true);
+    } else if (destination === 'playlist' && matchedVideoIds.length > 0) {
+      const finalTitle = playlistTitle.trim() || t.importer.defaultPlaylistName;
+      const desc = t.importer.defaultPlaylistDesc;
 
-      let plId = await onCreatePlaylistInWebview(finalTitle, desc, matchedVideoIds);
-      if (!plId && window.auraAPI?.createPlaylistOnYouTubeMusic) {
-        const res = await window.auraAPI.createPlaylistOnYouTubeMusic(
-          finalTitle,
-          desc,
-          matchedVideoIds
-        );
-        if (res.ok && res.playlistId) {
-          plId = res.playlistId;
-        }
-      }
+      const plId = await onCreatePlaylistInWebview(finalTitle, desc, matchedVideoIds);
       setCreatedPlaylistId(plId);
     }
 
@@ -286,17 +303,19 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
       if (tracks && tracks.length > 0) {
         await startTransfer(tracks, destination, pl.title);
       } else {
-        setStatusError('No tracks found inside this playlist.');
+        setStatusError(t.importer.errorNoTracksPlaylist);
       }
     } catch (err: any) {
       setIsConnecting(false);
-      setStatusError(err.message || 'Error fetching playlist tracks.');
+      setStatusError(err.message || t.importer.errorFetchPlaylist);
     }
   };
 
   return (
     <div
-      onClick={onClose}
+      onClick={() => {
+        if (!isTransferring || transferDone) handleCloseModal();
+      }}
       className="fixed inset-0 z-50 bg-black/20 flex items-center justify-center p-4"
     >
       <div
@@ -316,7 +335,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleCloseModal}
             className="p-2 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -345,12 +364,18 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
             transferDone={transferDone}
             transferDestination={transferDestination}
             createdPlaylistId={createdPlaylistId}
+            wasCancelled={wasCancelled}
+            onCancel={() => {
+              cancelTransferRef.current = true;
+              setWasCancelled(true);
+            }}
             onReset={() => {
               setIsTransferring(false);
               setTransferDone(false);
+              setWasCancelled(false);
             }}
             onNavigateIframe={onNavigateIframe}
-            onClose={onClose}
+            onClose={handleCloseModal}
           />
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -360,11 +385,6 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 onClick={() => {
                   setSourceTab('spotify');
                   setStatusError(null);
-                  if (spotifyData) {
-                    setSelectedTrackIndices(
-                      new Set((spotifyData.likedSongs || []).map((_, idx) => idx))
-                    );
-                  }
                 }}
                 className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer ${
                   sourceTab === 'spotify'
@@ -380,11 +400,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 onClick={() => {
                   setSourceTab('apple');
                   setStatusError(null);
-                  if (appleData) {
-                    setSelectedTrackIndices(
-                      new Set((appleData.likedSongs || []).map((_, idx) => idx))
-                    );
-                  } else {
+                  if (!appleData) {
                     handleConnectAppleMusic();
                   }
                 }}
@@ -458,6 +474,7 @@ export const MusicImporterModal: React.FC<MusicImporterModalProps> = ({
                 onParseUrl={handleParseUrl}
                 onCustomPlaylistNameChange={setCustomPlaylistName}
                 onToggleTrackSelection={toggleTrackSelection}
+                onToggleSelectAllTracks={toggleSelectAllTracks}
                 onStartTransfer={startTransfer}
               />
             )}

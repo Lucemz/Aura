@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldCheck,
   Sliders,
@@ -66,6 +66,15 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
   const [aiStatus, setAiStatus] = useState<AIStatusInfo | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimeoutRef.current) {
+        clearTimeout(savedTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const toggleSection = (id: SectionId) => {
     setOpenSections((prev) => ({
@@ -129,12 +138,19 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         if (updated) {
           setAiStatus(updated);
           setSelectedModel(updated.selectedModel);
+          setApiKeyInput(updated.apiKey || '');
         }
       } else if (window.auraAPI?.setAiApiKey) {
         await window.auraAPI.setAiApiKey(trimmed);
       }
+      if (savedTimeoutRef.current) {
+        clearTimeout(savedTimeoutRef.current);
+      }
       setSavedNotice(true);
-      setTimeout(() => setSavedNotice(false), 1600);
+      savedTimeoutRef.current = setTimeout(() => {
+        setSavedNotice(false);
+        savedTimeoutRef.current = null;
+      }, 1600);
     } finally {
       setLoadingModels(false);
     }
@@ -191,6 +207,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       {/* 1. Account & Library Accordion */}
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
         <button
+          type="button"
           onClick={() => toggleSection('account')}
           className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/[0.04] transition cursor-pointer"
         >
@@ -230,7 +247,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
                   )}
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-white truncate">
-                      {t.settings.connectedAccount}
+                      {ytmProfile.name || t.settings.connectedAccount}
                     </p>
                     <p className="text-[11px] text-emerald-400 truncate">
                       {ytmProfile.email || t.settings.activeSession}
@@ -269,6 +286,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       {/* 2. AI Engine & Real API Telemetry Accordion */}
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
         <button
+          type="button"
           onClick={() => toggleSection('ai')}
           className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/[0.04] transition cursor-pointer"
         >
@@ -297,25 +315,32 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         {openSections.ai && (
           <div className="px-3 pb-3 pt-1.5 space-y-2.5 border-t border-white/[0.06]">
             {/* API Key Input */}
-            <div className="flex gap-1.5">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveApiKey();
+              }}
+              className="flex gap-1.5"
+            >
               <div className="relative flex-1">
                 <KeyRound className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-2" />
                 <input
                   type="password"
                   value={apiKeyInput}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder={t.settings.aiKeyPlaceholder}
                   className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-2 py-1.5 text-[11px] text-white placeholder-neutral-500 outline-none focus:border-white/30"
                 />
               </div>
               <button
-                onClick={handleSaveApiKey}
+                type="submit"
                 disabled={loadingModels}
                 className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[11px] font-semibold cursor-pointer disabled:opacity-50"
               >
                 {loadingModels ? '...' : savedNotice ? t.settings.saved : t.settings.save}
               </button>
-            </div>
+            </form>
 
             {/* Dynamic Model Selector fetched from the key's `/models` endpoint */}
             <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
@@ -433,6 +458,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       {/* 3. Player Theme / Accent Color Accordion */}
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
         <button
+          type="button"
           onClick={() => toggleSection('theme')}
           className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/[0.04] transition cursor-pointer"
         >
@@ -479,6 +505,7 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
       {/* 4. Audio Equalizer Preset Accordion */}
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
         <button
+          type="button"
           onClick={() => toggleSection('eq')}
           className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/[0.04] transition cursor-pointer"
         >
@@ -516,9 +543,10 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
         )}
       </div>
 
-      {/* 5. System & Preferences (AdBlocker, Language & Mac Shortcuts) Accordion */}
+      {/* 5. System & Preferences (AdBlocker & Language) Accordion */}
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.08] overflow-hidden">
         <button
+          type="button"
           onClick={() => toggleSection('system')}
           className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/[0.04] transition cursor-pointer"
         >
@@ -577,11 +605,6 @@ export const SettingsPopover: React.FC<SettingsPopoverProps> = ({
                   </button>
                 ))}
               </div>
-            </div>
-
-            <div className="p-2 rounded-xl bg-white/5 border border-white/5 text-[11px] text-neutral-400 flex items-center justify-between">
-              <span>{t.settings.macShortcuts}</span>
-              <span className="font-mono text-white">F7 ⏮ · F8 ⏯ · F9 ⏭</span>
             </div>
           </div>
         )}

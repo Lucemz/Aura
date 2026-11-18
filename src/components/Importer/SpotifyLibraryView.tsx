@@ -224,60 +224,73 @@ export const SpotifyLibraryView: React.FC<SpotifyLibraryViewProps> = ({
       {/* CATEGORY 2: PLAYLISTS */}
       {categoryTab === 'playlists' && (
         <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3 p-1">
-          {spotifyData.playlists.map((pl) => (
-            <div
-              key={pl.id}
-              className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition"
-            >
-              <div className="flex items-center gap-3 min-w-0 pr-2">
-                {pl.thumbnail ? (
-                  <img
-                    src={pl.thumbnail}
-                    alt={pl.title}
-                    className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
-                    <ListMusic className="w-6 h-6 text-neutral-400" />
+          {spotifyData.playlists.map((pl) => {
+            const isOwner =
+              pl.isOwner ??
+              (pl.description === 'Creada por ti' || pl.description === 'Created by you');
+            const hasOwnerMetadata =
+              pl.isOwner !== undefined ||
+              pl.description === 'Creada por ti' ||
+              pl.description === 'Created by you';
+            const ownerLabel = hasOwnerMetadata
+              ? isOwner
+                ? t.importer.createdByYou
+                : t.importer.savedPlaylist
+              : pl.description;
+
+            return (
+              <div
+                key={pl.id}
+                className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition"
+              >
+                <div className="flex items-center gap-3 min-w-0 pr-2">
+                  {pl.thumbnail ? (
+                    <img
+                      src={pl.thumbnail}
+                      alt={pl.title}
+                      className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
+                      <ListMusic className="w-6 h-6 text-neutral-400" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white truncate">{pl.title}</p>
+                    <p className="text-[11px] text-neutral-400 truncate">
+                      {ownerLabel ? (
+                        <span
+                          className={
+                            isOwner ? 'text-[#1DB954] font-medium' : 'text-neutral-400'
+                          }
+                        >
+                          {ownerLabel} •{' '}
+                        </span>
+                      ) : null}
+                      {pl.trackCount ? `${pl.trackCount}` : 'Playlist'}
+                    </p>
                   </div>
-                )}
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{pl.title}</p>
-                  <p className="text-[11px] text-neutral-400 truncate">
-                    {pl.description ? (
-                      <span
-                        className={
-                          pl.description === 'Creada por ti'
-                            ? 'text-[#1DB954] font-medium'
-                            : 'text-neutral-400'
-                        }
-                      >
-                        {pl.description} •{' '}
-                      </span>
-                    ) : null}
-                    {pl.trackCount ? `${pl.trackCount}` : 'Playlist'}
-                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={() => onTransferSelectedPlaylist(pl, 'playlist')}
+                    disabled={isConnecting}
+                    className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
+                  >
+                    {t.importer.createPlaylistBtn}
+                  </button>
+                  <button
+                    onClick={() => onTransferSelectedPlaylist(pl, 'likes')}
+                    disabled={isConnecting}
+                    className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
+                  >
+                    {t.importer.sendToLikesShort}
+                  </button>
                 </div>
               </div>
-
-              <div className="flex flex-col gap-1.5 flex-shrink-0">
-                <button
-                  onClick={() => onTransferSelectedPlaylist(pl, 'playlist')}
-                  disabled={isConnecting}
-                  className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold cursor-pointer transition"
-                >
-                  {t.importer.createPlaylistBtn}
-                </button>
-                <button
-                  onClick={() => onTransferSelectedPlaylist(pl, 'likes')}
-                  disabled={isConnecting}
-                  className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-neutral-200 text-[11px] cursor-pointer transition"
-                >
-                  {t.importer.sendToLikesShort}
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

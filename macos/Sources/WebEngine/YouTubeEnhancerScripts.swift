@@ -1,10 +1,11 @@
 import Foundation
 
 enum YouTubeEnhancerScripts {
-    /// Injected into `ytmWebView` (`https://music.youtube.com`):
+    /// Injected at `.atDocumentEnd` into `ytmWebView` (`https://music.youtube.com`):
     /// - Preserves 100% default video & audio quality (removes any quality override)
-    /// - Skips video/audio ads automatically & dismisses "Are you still listening?" dialogs
-    /// - Pauses non-essential CSS animations when window is in background eco-mode
+    /// - Skips active ads & dismisses only genuinely open "Are you still listening?" dialogs
+    /// - Leaves WebKit's native W3C MediaSession, AirPods & macOS Now Playing 100% untouched
+    /// - Scoped dynamic artwork accent color (zero root style invalidation)
     static let youtubeMusicEnhancerJS = """
     (function() {
       if (window.__auraSafariEnhancer) return;
@@ -15,7 +16,7 @@ enum YouTubeEnhancerScripts {
         localStorage.removeItem('yt-player-quality');
       } catch (e) {}
 
-      // Background Eco-Mode CSS + Zero-Overhead Static Aura Branding & Dynamic Accent Variable
+      // Scoped Aura Branding & Player Accent Variables (no universal * selectors, zero full-DOM style recalc)
       try {
         const auraLogoSvg = encodeURIComponent(`
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
@@ -40,16 +41,24 @@ enum YouTubeEnhancerScripts {
 
         const style = document.createElement('style');
         style.textContent = `
-          :root {
+          ytmusic-player-bar,
+          ytmusic-guide-renderer {
             --aura-accent: #8b5cf6;
             --aura-accent-soft: rgba(139, 92, 246, 0.16);
           }
 
-          html.__aura-eco-bg *,
-          html.__aura-eco-bg *::before,
-          html.__aura-eco-bg *::after {
-            animation-play-state: paused !important;
-            transition: none !important;
+          /* Instant tactile response on player controls */
+          ytmusic-player-bar .next-button,
+          ytmusic-player-bar .previous-button,
+          ytmusic-player-bar #play-pause-button {
+            transition: transform 70ms cubic-bezier(0.2, 0, 0, 1), opacity 70ms ease !important;
+            will-change: transform;
+          }
+          ytmusic-player-bar .next-button:active,
+          ytmusic-player-bar .previous-button:active,
+          ytmusic-player-bar #play-pause-button:active {
+            transform: scale(0.86) !important;
+            opacity: 0.85 !important;
           }
 
           /* Hide original YouTube Music SVG inside ytmusic-logo and show Aura vector emblem */
@@ -88,7 +97,7 @@ enum YouTubeEnhancerScripts {
             color: #ffffff;
           }
 
-          /* Player & Active Theme Color driven by --aura-accent (0% GPU/CPU cost) */
+          /* Player & Active Theme Color scoped to player bar & guide (zero root style invalidation) */
           #progress-bar.ytmusic-player-bar,
           #volume-slider.ytmusic-player-bar,
           #expand-volume-slider.ytmusic-player-bar {
@@ -114,54 +123,81 @@ enum YouTubeEnhancerScripts {
         document.head.appendChild(style);
       } catch (e) {}
 
-      // Lightweight Theme Controller (Fixed Color or Dynamic per-song Artwork sampling)
+      // Scoped Theme Controller (updates only ytmusic-player-bar & ytmusic-guide-renderer, never :root)
       window.__auraThemeMode = localStorage.getItem('__aura_theme_mode') || 'dynamic';
+      window.__auraAutoSkipAds = localStorage.getItem('__aura_auto_skip_ads') !== 'false';
       window.__auraLastThumb = '';
+      window.__auraFailedThumb = '';
+      window.__auraSampleTimer = null;
 
-      window.__auraApplyHexColor = function(hex, softRgba) {
-        document.documentElement.style.setProperty('--aura-accent', hex);
-        document.documentElement.style.setProperty('--aura-accent-soft', softRgba);
+      window.__auraSetAutoSkipAds = function(enabled) {
+        window.__auraAutoSkipAds = Boolean(enabled);
+        try { localStorage.setItem('__aura_auto_skip_ads', window.__auraAutoSkipAds ? 'true' : 'false'); } catch (e) {}
       };
 
-      window.__auraSampleCurrentArtwork = function() {
-        if (window.__auraThemeMode !== 'dynamic') return;
-        const img = document.querySelector('ytmusic-player-bar img.image');
-        if (!img || !img.src || img.src === window.__auraLastThumb) return;
-        window.__auraLastThumb = img.src;
+      window.__auraApplyHexColor = function(hex, softRgba) {
+        const bar = document.querySelector('ytmusic-player-bar');
+        if (bar) {
+          bar.style.setProperty('--aura-accent', hex);
+          bar.style.setProperty('--aura-accent-soft', softRgba);
+        }
+        const guide = document.querySelector('ytmusic-guide-renderer');
+        if (guide) {
+          guide.style.setProperty('--aura-accent', hex);
+          guide.style.setProperty('--aura-accent-soft', softRgba);
+        }
+      };
 
-        const probe = new Image();
-        probe.crossOrigin = 'Anonymous';
-        probe.onload = function() {
-          try {
-            const c = document.createElement('canvas');
-            c.width = 8;
-            c.height = 8;
-            const ctx = c.getContext('2d');
-            if (!ctx) return;
-            ctx.drawImage(probe, 0, 0, 8, 8);
-            const data = ctx.getImageData(0, 0, 8, 8).data;
-            let bestR = 139, bestG = 92, bestB = 246, maxSat = -1;
-            for (let i = 0; i < data.length; i += 4) {
-              const r = data[i], g = data[i + 1], b = data[i + 2];
-              const max = Math.max(r, g, b), min = Math.min(r, g, b);
-              const lum = (max + min) / 2;
-              if (lum < 45 || lum > 235) continue;
-              const sat = max - min;
-              if (sat > maxSat) {
-                maxSat = sat;
-                bestR = r; bestG = g; bestB = b;
+      const sharedCanvas = document.createElement('canvas');
+      sharedCanvas.width = 6;
+      sharedCanvas.height = 6;
+      const sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
+
+      window.__auraSampleCurrentArtwork = function() {
+        if (window.__auraThemeMode !== 'dynamic' || !sharedCtx) return;
+        const img = document.querySelector('ytmusic-player-bar img.image');
+        if (!img || !img.src || img.src === window.__auraLastThumb || img.src === window.__auraFailedThumb) return;
+        const targetSrc = img.src;
+
+        if (window.__auraSampleTimer) clearTimeout(window.__auraSampleTimer);
+        window.__auraSampleTimer = setTimeout(() => {
+          const probe = new Image();
+          probe.crossOrigin = 'Anonymous';
+          probe.onerror = function() {
+            window.__auraFailedThumb = targetSrc;
+            if (window.__auraLastThumb === targetSrc) window.__auraLastThumb = '';
+          };
+          probe.onload = function() {
+            try {
+              sharedCtx.drawImage(probe, 0, 0, 6, 6);
+              const data = sharedCtx.getImageData(0, 0, 6, 6).data;
+              window.__auraLastThumb = targetSrc;
+              window.__auraFailedThumb = '';
+              let bestR = 139, bestG = 92, bestB = 246, maxSat = -1;
+              for (let i = 0; i < data.length; i += 4) {
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                const max = Math.max(r, g, b), min = Math.min(r, g, b);
+                const lum = (max + min) / 2;
+                if (lum < 45 || lum > 235) continue;
+                const sat = max - min;
+                if (sat > maxSat) {
+                  maxSat = sat;
+                  bestR = r; bestG = g; bestB = b;
+                }
               }
+              const boost = (v) => Math.min(255, Math.max(70, Math.round(v * 1.15)));
+              const r = boost(bestR), g = boost(bestG), b = boost(bestB);
+              window.__auraApplyHexColor(
+                `rgb(${r}, ${g}, ${b})`,
+                `rgba(${r}, ${g}, ${b}, 0.18)`
+              );
+            } catch (e) {
+              window.__auraFailedThumb = targetSrc;
+              if (window.__auraLastThumb === targetSrc) window.__auraLastThumb = '';
             }
-            // Boost brightness slightly so it always looks vibrant on dark UI
-            const boost = (v) => Math.min(255, Math.max(70, Math.round(v * 1.15)));
-            const r = boost(bestR), g = boost(bestG), b = boost(bestB);
-            window.__auraApplyHexColor(
-              `rgb(${r}, ${g}, ${b})`,
-              `rgba(${r}, ${g}, ${b}, 0.18)`
-            );
-          } catch (e) {}
-        };
-        probe.src = img.src;
+          };
+          probe.src = targetSrc;
+        }, 900);
       };
 
       window.__auraSetThemeMode = function(mode) {
@@ -178,30 +214,45 @@ enum YouTubeEnhancerScripts {
           window.__auraApplyHexColor(presets[mode][0], presets[mode][1]);
         } else {
           window.__auraLastThumb = '';
+          window.__auraFailedThumb = '';
           window.__auraSampleCurrentArtwork();
         }
       };
 
-      // Initialize saved theme mode
-      setTimeout(() => window.__auraSetThemeMode(window.__auraThemeMode), 600);
+      setTimeout(() => window.__auraSetThemeMode(window.__auraThemeMode), 800);
 
-      // Low-overhead Ad-Skipper & 'Still Listening?' auto-dismiss
+      // Low-overhead Ad-Skipper & active-only 'Still Listening?' dismiss (never clicks hidden dialogs)
       setInterval(() => {
         try {
-          const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
-          if (skipBtn) skipBtn.click();
+          const video = document.querySelector('video');
+          if (video && video.preload !== 'auto') {
+            video.preload = 'auto';
+          }
 
-          const adOverlayClose = document.querySelector('.ytp-ad-overlay-close-button');
-          if (adOverlayClose) adOverlayClose.click();
+          if (window.__auraAutoSkipAds !== false) {
+            const player = document.getElementById('movie_player');
+            if (player && player.classList.contains('ad-showing')) {
+              const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+              if (skipBtn) skipBtn.click();
+              const adOverlayClose = document.querySelector('.ytp-ad-overlay-close-button');
+              if (adOverlayClose) adOverlayClose.click();
+            }
 
-          const confirmDialog = document.querySelector('ytmusic-you-there-renderer button');
-          if (confirmDialog) confirmDialog.click();
+            const openDialog = document.querySelector('tp-yt-paper-dialog[opened]');
+            if (openDialog && openDialog.getAttribute('aria-hidden') !== 'true') {
+              const renderer = openDialog.querySelector('ytmusic-you-there-renderer');
+              if (renderer && renderer.offsetParent !== null) {
+                const confirmBtn = renderer.querySelector('button');
+                if (confirmBtn) confirmBtn.click();
+              }
+            }
+          }
 
-          if (window.__auraThemeMode === 'dynamic' && window.__auraSampleCurrentArtwork) {
+          if (window.__auraThemeMode === 'dynamic') {
             window.__auraSampleCurrentArtwork();
           }
         } catch (e) {}
-      }, 2000);
+      }, 2500);
     })();
     """
 
@@ -211,7 +262,6 @@ enum YouTubeEnhancerScripts {
       const pending = new Map();
       let seq = 1;
       const authListeners = new Set();
-      const mediaListeners = { 'toggle-play': new Set(), 'next': new Set(), 'previous': new Set() };
 
       window.__auraResolve = function(id, result) {
         const p = pending.get(id);
@@ -223,11 +273,6 @@ enum YouTubeEnhancerScripts {
 
       window.__auraEmitAuthSuccess = function() {
         authListeners.forEach(cb => { try { cb(); } catch (e) {} });
-      };
-
-      window.__auraEmitMediaKey = function(action) {
-        const set = mediaListeners[action];
-        if (set) set.forEach(cb => { try { cb(); } catch (e) {} });
       };
 
       function callNative(cmd, args = {}) {
@@ -280,17 +325,9 @@ enum YouTubeEnhancerScripts {
         setAiApiKey: (apiKey) => callNative('setAiApiKey', { apiKey }),
         getAiStatus: () => callNative('getAiStatus'),
         saveAiConfig: (model, apiKey) => callNative('saveAiConfig', { model, apiKey }),
-        likeSongOnYouTubeMusic: (videoId) => callNative('likeSongOnYouTubeMusic', { videoId }),
-        createPlaylistOnYouTubeMusic: (title, description, videoIds = []) =>
-          callNative('createPlaylistOnYouTubeMusic', { title, description, videoIds }),
-        addVideosToYouTubePlaylist: () => Promise.resolve({ ok: true }),
 
         toggleMiniPlayer: () => callNative('toggleMiniPlayer'),
-        isMiniPlayer: () => callNative('isMiniPlayer'),
-        onMediaKey: (action, cb) => {
-          if (mediaListeners[action]) mediaListeners[action].add(cb);
-          return () => { if (mediaListeners[action]) mediaListeners[action].delete(cb); };
-        }
+        isMiniPlayer: () => callNative('isMiniPlayer')
       };
 
       // Native macOS window dragging when dragging the top bar background

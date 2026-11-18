@@ -35,6 +35,10 @@ export async function applyEqualizerPresetInYTM(
         const video = document.querySelector('video');
         if (!video) return;
 
+        if (${JSON.stringify(preset)} === 'flat' && !window.__auraAudioCtx) {
+          return;
+        }
+
         if (!window.__auraAudioCtx) {
           const AudioCtx = window.AudioContext || window.webkitAudioContext;
           const ctx = new AudioCtx();
@@ -58,7 +62,18 @@ export async function applyEqualizerPresetInYTM(
           treble.connect(ctx.destination);
 
           window.__auraAudioCtx = ctx;
+          window.__auraVideoEl = video;
           window.__auraFilters = { bass, mid, treble };
+        } else {
+          if (window.__auraVideoEl !== video && window.__auraFilters && window.__auraFilters.bass) {
+            const source = window.__auraAudioCtx.createMediaElementSource(video);
+            source.connect(window.__auraFilters.bass);
+            window.__auraVideoEl = video;
+          }
+        }
+
+        if (window.__auraAudioCtx && window.__auraAudioCtx.state === 'suspended') {
+          window.__auraAudioCtx.resume().catch(() => {});
         }
 
         if (window.__auraFilters) {
@@ -69,7 +84,7 @@ export async function applyEqualizerPresetInYTM(
       } catch (e) {
         console.warn('EQ init error:', e);
       }
-    })();
+    })()
     `,
     fallbackWebview
   ).catch(() => {});
@@ -91,8 +106,9 @@ export async function likeTrackInYouTubeMusic(
       (async function() {
         try {
           const ytcfg = window.ytcfg;
+          const fallbackHl = (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es-419' : 'en';
           const context = ytcfg ? ytcfg.get('INNERTUBE_CONTEXT') : {
-            client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: 'es-419', gl: 'PE' }
+            client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: fallbackHl, gl: 'US' }
           };
           const apiKey = ytcfg ? ytcfg.get('INNERTUBE_API_KEY') : '';
           const headers = {
@@ -149,8 +165,9 @@ export async function createPlaylistInYouTubeMusic(
       (async function() {
         try {
           const ytcfg = window.ytcfg;
+          const fallbackHl = (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es-419' : 'en';
           const context = ytcfg ? ytcfg.get('INNERTUBE_CONTEXT') : {
-            client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: 'es-419', gl: 'PE' }
+            client: { clientName: 'WEB_REMIX', clientVersion: '1.20241020.01.00', hl: fallbackHl, gl: 'US' }
           };
           const apiKey = ytcfg ? ytcfg.get('INNERTUBE_API_KEY') : '';
           const headers = {
@@ -165,6 +182,11 @@ export async function createPlaylistInYouTubeMusic(
           if (ytcfg && ytcfg.get('VISITOR_DATA')) {
             headers['X-Goog-Visitor-Id'] = ytcfg.get('VISITOR_DATA');
           }
+          const rawIds = ${JSON.stringify(videoIds)};
+          const allIds = Array.isArray(rawIds) ? rawIds : [];
+          const initialIds = allIds.slice(0, 50);
+          const remainingIds = allIds.slice(50);
+
           const url = 'https://music.youtube.com/youtubei/v1/playlist/create?alt=json' + (apiKey ? '&key=' + apiKey : '');
           const res = await fetch(url, {
             method: 'POST',
@@ -175,12 +197,37 @@ export async function createPlaylistInYouTubeMusic(
               title: ${JSON.stringify(title)},
               description: ${JSON.stringify(description)},
               privacyStatus: 'PRIVATE',
-              videoIds: ${JSON.stringify(videoIds)}
+              videoIds: initialIds
             })
           });
           if (!res.ok) return null;
           const data = await res.json();
-          return data.playlistId || null;
+          const playlistId = data.playlistId;
+
+          if (playlistId && remainingIds.length > 0) {
+            const editUrl = 'https://music.youtube.com/youtubei/v1/browse/edit_playlist?alt=json' + (apiKey ? '&key=' + apiKey : '');
+            for (let i = 0; i < remainingIds.length; i += 50) {
+              const chunk = remainingIds.slice(i, i + 50);
+              try {
+                await fetch(editUrl, {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers,
+                  body: JSON.stringify({
+                    context,
+                    playlistId,
+                    actions: chunk.map(id => ({
+                      action: 'ACTION_ADD_VIDEO',
+                      addedVideoId: id,
+                      dedupeOption: 'DEDUPE_OPTION_SKIP'
+                    }))
+                  })
+                });
+              } catch (e) {}
+            }
+          }
+
+          return playlistId || null;
         } catch (e) {
           return null;
         }

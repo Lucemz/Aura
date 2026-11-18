@@ -20,6 +20,7 @@ export interface ImportedPlaylist {
   provider: 'spotify' | 'apple';
   title: string;
   description?: string;
+  isOwner?: boolean;
   trackCount: number;
   thumbnail?: string;
   tracks?: ImportedTrack[];
@@ -169,23 +170,9 @@ declare global {
       setAiApiKey?: (apiKey: string) => Promise<boolean>;
       getAiStatus?: () => Promise<AIStatusInfo>;
       saveAiConfig?: (model: AIModelId, apiKey: string) => Promise<AIStatusInfo>;
-      likeSongOnYouTubeMusic: (videoId: string) => Promise<{ ok: boolean; error?: string }>;
-      createPlaylistOnYouTubeMusic: (
-        title: string,
-        description: string,
-        videoIds?: string[]
-      ) => Promise<{ ok: boolean; playlistId?: string; error?: string }>;
-      addVideosToYouTubePlaylist: (
-        playlistId: string,
-        videoIds: string[]
-      ) => Promise<{ ok: boolean; error?: string }>;
 
       toggleMiniPlayer: () => Promise<boolean>;
       isMiniPlayer: () => Promise<boolean>;
-      onMediaKey: (
-        action: 'toggle-play' | 'next' | 'previous',
-        callback: () => void
-      ) => () => void;
 
       // Native Safari WKWebView bridge methods
       isSafariEngine?: boolean;

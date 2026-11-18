@@ -1,6 +1,12 @@
 import Cocoa
 import WebKit
 
+final class InstantClickWKWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+}
+
 @MainActor
 final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
     var mainWindow: NSWindow!
@@ -10,6 +16,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
     private var isMiniPlayer = false
     private var previousFrame: NSRect?
     private var overlayExpanded = false
+    private var isUiLoaded = false
 
     func setupWindow() {
         let initialFrame = NSRect(x: 0, y: 0, width: 1240, height: 820)
@@ -30,7 +37,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         guard let contentView = mainWindow.contentView else { return }
         contentView.wantsLayer = true
 
-        // 1. Configure Native Safari WKWebView for YouTube Music (Spatial Audio via AVFoundation)
+        // 1. Configure Native Safari WKWebView for YouTube Music (Spatial Audio + WebKit MediaSession)
         let ytmConfig = WKWebViewConfiguration()
         ytmConfig.websiteDataStore = WKWebsiteDataStore.default()
         ytmConfig.mediaTypesRequiringUserActionForPlayback = []
@@ -43,11 +50,11 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         )
         ytmConfig.userContentController.addUserScript(ytmScript)
 
-        ytmWebView = WKWebView(frame: .zero, configuration: ytmConfig)
+        ytmWebView = InstantClickWKWebView(frame: .zero, configuration: ytmConfig)
         ytmWebView.customUserAgent = AppConfig.safariUserAgent
         ytmWebView.uiDelegate = self
         ytmWebView.navigationDelegate = self
-        ytmWebView.allowsBackForwardNavigationGestures = true
+        ytmWebView.allowsBackForwardNavigationGestures = false
         ytmWebView.setValue(false, forKey: "drawsBackground")
         contentView.addSubview(ytmWebView)
 
@@ -64,8 +71,9 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         )
         uiConfig.userContentController.addUserScript(bridgeScript)
 
-        uiWebView = WKWebView(frame: .zero, configuration: uiConfig)
+        uiWebView = InstantClickWKWebView(frame: .zero, configuration: uiConfig)
         uiWebView.customUserAgent = AppConfig.safariUserAgent
+        uiWebView.navigationDelegate = self
         uiWebView.setValue(false, forKey: "drawsBackground")
         if #available(macOS 12.0, *) {
             uiWebView.underPageBackgroundColor = .clear
@@ -84,51 +92,43 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         }
         contentView.postsFrameChangedNotifications = true
 
-        // Eco-mode toggle when window is unfocused/minimized (keeps audio & video quality 100% untouched)
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification,
-            object: mainWindow,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.ytmWebView.evaluateJavaScript(
-                    "document.documentElement.classList.add('__aura-eco-bg');",
-                    completionHandler: nil
-                )
-            }
-        }
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeKeyNotification,
-            object: mainWindow,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.ytmWebView.evaluateJavaScript(
-                    "document.documentElement.classList.remove('__aura-eco-bg');",
-                    completionHandler: nil
-                )
-            }
-        }
-
         // Load UI and restore cached Google cookies before loading YouTube Music
         uiWebView.load(URLRequest(url: AppConfig.localUIEntryURL))
 
         Task { @MainActor in
             await GoogleAuthService.shared.restoreCachedCookiesIntoWebKit()
             self.ytmWebView.load(URLRequest(url: AppConfig.youtubeMusicHomeURL))
-            self.uiWebView.evaluateJavaScript(
-                "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
-                completionHandler: nil
-            )
+            if self.isUiLoaded {
+                self.emitAuthSuccessToUI()
+            }
         }
 
         mainWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        setupMediaKeyMonitor()
+    }
+
+    private func emitAuthSuccessToUI() {
+        guard isUiLoaded else { return }
+        uiWebView.evaluateJavaScript(
+            "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
+            completionHandler: nil
+        )
     }
 
     func showWindow() {
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func clampFrameToVisibleScreen(_ frame: NSRect) -> NSRect {
+        guard let visible = (mainWindow.screen ?? NSScreen.main)?.visibleFrame else {
+            return frame
+        }
+        var r = frame
+        r.size.width = min(r.size.width, visible.width)
+        r.size.height = min(r.size.height, visible.height)
+        r.origin.x = min(max(r.origin.x, visible.minX), visible.maxX - r.width)
+        r.origin.y = min(max(r.origin.y, visible.minY), visible.maxY - r.height)
+        return r
     }
 
     private func layoutWebViews() {
@@ -156,34 +156,6 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
         }
     }
 
-    private func setupMediaKeyMonitor() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self else { return event }
-            switch event.keyCode {
-            case 98: // F7 Previous
-                self.uiWebView.evaluateJavaScript(
-                    "window.__auraEmitMediaKey && window.__auraEmitMediaKey('previous');",
-                    completionHandler: nil
-                )
-                return nil
-            case 100: // F8 Play/Pause
-                self.uiWebView.evaluateJavaScript(
-                    "window.__auraEmitMediaKey && window.__auraEmitMediaKey('toggle-play');",
-                    completionHandler: nil
-                )
-                return nil
-            case 101: // F9 Next
-                self.uiWebView.evaluateJavaScript(
-                    "window.__auraEmitMediaKey && window.__auraEmitMediaKey('next');",
-                    completionHandler: nil
-                )
-                return nil
-            default:
-                return event
-            }
-        }
-    }
-
     // MARK: - WKUIDelegate & WKNavigationDelegate
     func webView(
         _ webView: WKWebView,
@@ -204,10 +176,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                     let ok = await GoogleAuthService.shared.authenticateViaExternalChrome()
                     if ok {
                         self.ytmWebView.load(URLRequest(url: AppConfig.youtubeMusicHomeURL))
-                        self.uiWebView.evaluateJavaScript(
-                            "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
-                            completionHandler: nil
-                        )
+                        self.emitAuthSuccessToUI()
                     }
                 }
                 return
@@ -228,10 +197,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 let ok = await GoogleAuthService.shared.authenticateViaExternalChrome()
                 if ok {
                     self.ytmWebView.load(URLRequest(url: AppConfig.youtubeMusicHomeURL))
-                    self.uiWebView.evaluateJavaScript(
-                        "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
-                        completionHandler: nil
-                    )
+                    self.emitAuthSuccessToUI()
                 }
             }
         }
@@ -239,11 +205,11 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView == ytmWebView {
-            uiWebView.evaluateJavaScript(
-                "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
-                completionHandler: nil
-            )
+        if webView == uiWebView {
+            isUiLoaded = true
+            emitAuthSuccessToUI()
+        } else if webView == ytmWebView, isUiLoaded {
+            emitAuthSuccessToUI()
         }
     }
 
@@ -302,17 +268,13 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 }
 
             case "getUserProfile":
-                if let _ = await GoogleAuthService.shared.getSapisidFromCookieStore() {
-                    let avatar =
-                        (await YouTubeMusicService.shared.evaluateInWebView(
-                            ytmWebView,
-                            js: "document.querySelector('ytmusic-settings-button img')?.src || ''"
-                        )) as? String ?? ""
+                if await GoogleAuthService.shared.getSapisidFromCookieStore() != nil {
+                    let profile = await YouTubeMusicService.shared.fetchAccountProfile(in: ytmWebView)
                     responseObj = [
                         "loggedIn": true,
-                        "name": "Cuenta Conectada",
-                        "email": "Safari WebKit + Spatial Audio",
-                        "avatar": avatar,
+                        "name": (profile["name"] as? String) ?? "",
+                        "email": (profile["email"] as? String) ?? "",
+                        "avatar": (profile["avatar"] as? String) ?? "",
                     ]
                 } else {
                     responseObj = ["loggedIn": false]
@@ -327,10 +289,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 let ok = await GoogleAuthService.shared.authenticateViaExternalChrome()
                 if ok {
                     ytmWebView.load(URLRequest(url: AppConfig.youtubeMusicHomeURL))
-                    uiWebView.evaluateJavaScript(
-                        "window.__auraEmitAuthSuccess && window.__auraEmitAuthSuccess();",
-                        completionHandler: nil
-                    )
+                    emitAuthSuccessToUI()
                 }
                 responseObj = ok
 
@@ -359,23 +318,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
 
             case "parseExternalMusicUrl":
                 let rawUrl = (args["url"] as? String) ?? ""
-                if let range = rawUrl.range(of: "playlist/([a-zA-Z0-9]+)", options: .regularExpression) {
-                    let sub = String(rawUrl[range])
-                    let plId = sub.components(separatedBy: "/").last ?? ""
-                    let tracks = await SpotifyService.shared.fetchPlaylistTracks(playlistId: plId)
-                    if !tracks.isEmpty {
-                        responseObj = [
-                            "ok": true,
-                            "provider": "spotify",
-                            "title": "Playlist de Spotify",
-                            "tracks": tracks,
-                        ]
-                    } else {
-                        responseObj = ["ok": false, "error": "No se encontraron canciones en esa playlist."]
-                    }
-                } else {
-                    responseObj = ["ok": false, "error": "Ingresa un enlace válido de Playlist de Spotify."]
-                }
+                responseObj = await SpotifyService.shared.parsePublicSpotifyUrl(rawUrl)
 
             case "searchYouTubeMusicTrack":
                 let title = (args["title"] as? String) ?? ""
@@ -421,7 +364,9 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                     mainWindow.level = .floating
                     let f = mainWindow.frame
                     mainWindow.setFrame(
-                        NSRect(x: f.maxX - 420, y: f.minY, width: 420, height: 580),
+                        clampFrameToVisibleScreen(
+                            NSRect(x: f.maxX - 420, y: f.minY, width: 420, height: 580)
+                        ),
                         display: true,
                         animate: true
                     )
@@ -429,7 +374,7 @@ final class MainWindowController: NSObject, WKScriptMessageHandler, WKUIDelegate
                 } else {
                     mainWindow.level = .normal
                     if let prev = previousFrame {
-                        mainWindow.setFrame(prev, display: true, animate: true)
+                        mainWindow.setFrame(clampFrameToVisibleScreen(prev), display: true, animate: true)
                     }
                     isMiniPlayer = false
                 }

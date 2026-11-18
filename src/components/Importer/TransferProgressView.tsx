@@ -15,6 +15,8 @@ interface TransferProgressViewProps {
   transferDone: boolean;
   transferDestination: 'likes' | 'playlist';
   createdPlaylistId: string | null;
+  wasCancelled?: boolean;
+  onCancel?: () => void;
   onReset: () => void;
   onNavigateIframe: (url: string) => void;
   onClose: () => void;
@@ -25,6 +27,8 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
   transferDone,
   transferDestination,
   createdPlaylistId,
+  wasCancelled = false,
+  onCancel,
   onReset,
   onNavigateIframe,
   onClose,
@@ -42,7 +46,9 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-white">
             {transferDone
-              ? `${t.importer.transferDoneTitle} (${syncedCount} / ${transferLogs.length} ${t.importer.transferSyncedSuffix})`
+              ? wasCancelled
+                ? `${t.importer.transferCancelled} (${syncedCount} / ${transferLogs.length} ${t.importer.transferSyncedSuffix})`
+                : `${t.importer.transferDoneTitle} (${syncedCount} / ${transferLogs.length} ${t.importer.transferSyncedSuffix})`
               : `${t.importer.transferringTitle} (${syncedCount} / ${transferLogs.length})`}
           </span>
           <span className="text-xs font-mono text-neutral-400">
@@ -104,6 +110,18 @@ export const TransferProgressView: React.FC<TransferProgressViewProps> = ({
           </div>
         ))}
       </div>
+
+      {!transferDone && onCancel && (
+        <div className="mt-4 flex items-center justify-end pt-3 border-t border-white/10">
+          <button
+            onClick={onCancel}
+            disabled={wasCancelled}
+            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-xs font-medium text-neutral-200 hover:text-red-300 cursor-pointer transition disabled:opacity-50"
+          >
+            {t.importer.cancelTransfer}
+          </button>
+        </div>
+      )}
 
       {transferDone && (
         <div className="mt-4 flex items-center justify-between pt-3 border-t border-white/10">
