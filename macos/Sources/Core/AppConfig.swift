@@ -34,7 +34,13 @@ enum AppConfig {
         if !fm.fileExists(atPath: auraDir.path) {
             try? fm.createDirectory(at: auraDir, withIntermediateDirectories: true)
         }
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: auraDir.path)
         return auraDir
+    }
+
+    static func writeSecureData(_ data: Data, to url: URL) {
+        try? data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     static var spotifyTokenFileURL: URL {

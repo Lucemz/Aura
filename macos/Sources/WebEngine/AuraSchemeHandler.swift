@@ -10,16 +10,18 @@ final class AuraSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
-        let distDir = resourceURL.appendingPathComponent("dist", isDirectory: true)
+        let distDir = resourceURL.appendingPathComponent("dist", isDirectory: true).standardizedFileURL
         var relativePath = url.path
         if relativePath.isEmpty || relativePath == "/" {
             relativePath = "/index.html"
         }
 
         let cleanRelative = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
-        let fileURL = distDir.appendingPathComponent(cleanRelative)
+        let fileURL = distDir.appendingPathComponent(cleanRelative).standardizedFileURL
+        let distPrefix = distDir.path.hasSuffix("/") ? distDir.path : distDir.path + "/"
 
-        guard let data = try? Data(contentsOf: fileURL) else {
+        guard fileURL.path.hasPrefix(distPrefix),
+              let data = try? Data(contentsOf: fileURL) else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }

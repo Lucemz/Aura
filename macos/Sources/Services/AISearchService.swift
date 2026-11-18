@@ -85,7 +85,7 @@ final class AISearchService {
     private func saveRawSettings(_ settings: [String: Any]) {
         let pruned = pruneOldTelemetry(in: settings)
         if let outData = try? JSONSerialization.data(withJSONObject: pruned, options: [.prettyPrinted]) {
-            try? outData.write(to: AppConfig.settingsFileURL, options: .atomic)
+            AppConfig.writeSecureData(outData, to: AppConfig.settingsFileURL)
         }
     }
 
@@ -124,6 +124,65 @@ final class AISearchService {
         return true
     }
 
+    private func defaultFallbackModel(for provider: String) -> DynamicModelInfo {
+        switch provider {
+        case "gemini":
+            return DynamicModelInfo(
+                id: "gemini-2.5-flash",
+                displayName: "Gemini 2.5 Flash",
+                provider: "gemini",
+                inputTokenLimit: 1048576,
+                outputTokenLimit: 65536,
+                supportsThinking: true
+            )
+        case "openai":
+            return DynamicModelInfo(
+                id: "gpt-4o-mini",
+                displayName: "GPT-4o mini",
+                provider: "openai",
+                inputTokenLimit: 128000,
+                outputTokenLimit: 16384,
+                supportsThinking: false
+            )
+        case "groq":
+            return DynamicModelInfo(
+                id: "llama-3.3-70b-versatile",
+                displayName: "Llama 3.3 70B Versatile",
+                provider: "groq",
+                inputTokenLimit: 128000,
+                outputTokenLimit: 32768,
+                supportsThinking: false
+            )
+        case "anthropic":
+            return DynamicModelInfo(
+                id: "claude-sonnet-4-20250514",
+                displayName: "Claude Sonnet 4",
+                provider: "anthropic",
+                inputTokenLimit: 200000,
+                outputTokenLimit: 8192,
+                supportsThinking: true
+            )
+        case "openrouter":
+            return DynamicModelInfo(
+                id: "openai/gpt-4o-mini",
+                displayName: "OpenAI: GPT-4o mini",
+                provider: "openrouter",
+                inputTokenLimit: 128000,
+                outputTokenLimit: 16384,
+                supportsThinking: false
+            )
+        default:
+            return DynamicModelInfo(
+                id: "openai-fast",
+                displayName: "GPT-OSS 20B (Free Keyless)",
+                provider: "pollinations",
+                inputTokenLimit: 32768,
+                outputTokenLimit: 4096,
+                supportsThinking: true
+            )
+        }
+    }
+
     // MARK: - Dynamic Model Discovery via Official Provider `/models` Endpoints
 
     func fetchAvailableModels(for apiKey: String, forceRefresh: Bool = false) async -> [DynamicModelInfo] {
@@ -159,29 +218,7 @@ final class AISearchService {
         }
 
         if discovered.isEmpty {
-            if provider == "pollinations" {
-                discovered = [
-                    DynamicModelInfo(
-                        id: "openai-fast",
-                        displayName: "GPT-OSS 20B (Free Keyless)",
-                        provider: "pollinations",
-                        inputTokenLimit: 32768,
-                        outputTokenLimit: 4096,
-                        supportsThinking: true
-                    )
-                ]
-            } else if provider == "gemini" {
-                discovered = [
-                    DynamicModelInfo(
-                        id: "gemini-3.8-flash",
-                        displayName: "Gemini 3.8 Flash",
-                        provider: "gemini",
-                        inputTokenLimit: 1048576,
-                        outputTokenLimit: 65536,
-                        supportsThinking: true
-                    )
-                ]
-            }
+            return [defaultFallbackModel(for: provider)]
         }
 
         cachedModelsKey = trimmed
@@ -190,13 +227,13 @@ final class AISearchService {
     }
 
     private func fetchGeminiModels(apiKey: String) async -> [DynamicModelInfo] {
-        guard let encodedKey = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=\(encodedKey)") else {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200") else {
             return []
         }
 
         var req = URLRequest(url: url)
         req.timeoutInterval = 10
+        req.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         guard let (data, response) = try? await URLSession.shared.data(for: req),
               let http = response as? HTTPURLResponse,
               (200...299).contains(http.statusCode),
@@ -206,7 +243,6 @@ final class AISearchService {
         }
 
         let excludedSubstrings = [
-            "gemini-2.5-", // Retired for new users by Google in favor of 3.x
             "tts",
             "image",
             "nano-banana",
@@ -262,6 +298,8 @@ final class AISearchService {
             "gemini-3.1-pro-preview",
             "gemini-3.1-flash-lite",
             "gemini-3-flash-preview",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
             "gemini-4-argon",
             "gemma-4-31b-it",
             "gemma-4-26b-a4b-it",
@@ -332,14 +370,15 @@ final class AISearchService {
             return []
         }
 
-        var results: [DynamicModelInfo] = []
-        for item in list.prefix(80) {
+        let popularPrefixes = ["anthropic/", "google/", "openai/", "meta-llama/", "deepseek/"]
+        var candidates: [DynamicModelInfo] = []
+        for item in list {
             guard let id = item["id"] as? String else { continue }
             let name = (item["name"] as? String) ?? id
             let ctx = (item["context_length"] as? Int) ?? 128000
             let topProvider = item["top_provider"] as? [String: Any]
             let maxOut = (topProvider?["max_completion_tokens"] as? Int) ?? 8192
-            results.append(
+            candidates.append(
                 DynamicModelInfo(
                     id: id,
                     displayName: name,
@@ -350,7 +389,14 @@ final class AISearchService {
                 )
             )
         }
-        return results
+        candidates.sort { a, b in
+            let idxA = popularPrefixes.firstIndex(where: { a.id.hasPrefix($0) }) ?? Int.max
+            let idxB = popularPrefixes.firstIndex(where: { b.id.hasPrefix($0) }) ?? Int.max
+            if idxA != idxB { return idxA < idxB }
+            if a.displayName != b.displayName { return a.displayName < b.displayName }
+            return a.id < b.id
+        }
+        return Array(candidates.prefix(120))
     }
 
     private func fetchAnthropicModels(apiKey: String) async -> [DynamicModelInfo] {
@@ -435,20 +481,39 @@ final class AISearchService {
 
     // MARK: - Configuration & Real Telemetry Status
 
+    private func maskApiKey(_ key: String) -> String {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.count <= 8 { return "••••••••" }
+        return "••••••••" + String(trimmed.suffix(4))
+    }
+
     func saveAiConfig(model: String, apiKey: String) async -> [String: Any] {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         var current = loadRawSettings()
-        let previousKey = ((current["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let previousKey = ((current["apiKey"] as? String) ?? (current["geminiApiKey"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let maskedPrev = maskApiKey(previousKey)
+        let effectiveKey: String
+        if trimmedKey == maskedPrev {
+            effectiveKey = previousKey
+        } else if !maskedPrev.isEmpty && trimmedKey.hasPrefix(maskedPrev) {
+            effectiveKey = String(trimmedKey.dropFirst(maskedPrev.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            effectiveKey = trimmedKey.replacingOccurrences(of: "•", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
-        current["apiKey"] = trimmedKey
-        current["geminiApiKey"] = trimmedKey
+        current["apiKey"] = effectiveKey
+        current["geminiApiKey"] = effectiveKey
 
-        let keyChanged = previousKey != trimmedKey
-        let models = await fetchAvailableModels(for: trimmedKey, forceRefresh: keyChanged)
+        let keyChanged = previousKey != effectiveKey
+        let models = await fetchAvailableModels(for: effectiveKey, forceRefresh: keyChanged)
 
         var chosenModel = model
         if keyChanged || !models.contains(where: { $0.id == chosenModel }) {
-            chosenModel = models.first?.id ?? (trimmedKey.isEmpty ? "openai-fast" : "gemini-3.8-flash")
+            chosenModel = models.first?.id ?? defaultFallbackModel(for: detectProvider(for: effectiveKey)).id
         }
 
         current["selectedModel"] = chosenModel
@@ -466,7 +531,7 @@ final class AISearchService {
         var selectedModel = (settings["selectedModel"] as? String) ?? ""
 
         if !models.contains(where: { $0.id == selectedModel }) {
-            selectedModel = models.first?.id ?? (apiKey.isEmpty ? "openai-fast" : "gemini-3.8-flash")
+            selectedModel = models.first?.id ?? defaultFallbackModel(for: provider).id
             settings["selectedModel"] = selectedModel
             saveRawSettings(settings)
         }
@@ -497,8 +562,10 @@ final class AISearchService {
         var tokens7Days = 0
         var requests7Days = 0
         for (_, dayInfo) in daily {
-            tokens7Days += (dayInfo["tokens"] as? Int) ?? 0
-            requests7Days += (dayInfo["requests"] as? Int) ?? 0
+            let dayByModel = (dayInfo["byModel"] as? [String: [String: Any]]) ?? [:]
+            let dayModelUsage = dayByModel[activeModelInfo.id] ?? [:]
+            tokens7Days += (dayModelUsage["tokens"] as? Int) ?? 0
+            requests7Days += (dayModelUsage["requests"] as? Int) ?? 0
         }
 
         var openRouterCredits: [String: Any] = [:]
@@ -512,7 +579,7 @@ final class AISearchService {
             "activeModelName": activeModelInfo.displayName,
             "provider": provider,
             "hasApiKey": !apiKey.isEmpty,
-            "apiKey": apiKey,
+            "apiKey": maskApiKey(apiKey),
             "usingApiKey": !apiKey.isEmpty,
             "inputTokenLimit": activeModelInfo.inputTokenLimit,
             "outputTokenLimit": activeModelInfo.outputTokenLimit,
@@ -595,7 +662,7 @@ final class AISearchService {
         let status = await getAiStatus()
         let activeModelId = (status["activeModel"] as? String) ?? "openai-fast"
         let provider = (status["provider"] as? String) ?? "pollinations"
-        let apiKey = (status["apiKey"] as? String) ?? ""
+        let apiKey = getGeminiApiKey()
 
         let result: (songs: [[String: String]]?, telemetry: APICallTelemetry, error: String?)
         switch provider {
@@ -684,8 +751,7 @@ final class AISearchService {
             return (nil, telemetry, AppConfig.isSpanishSystem ? "Configura tu API Key de Gemini primero." : "Configure your Gemini API Key first.")
         }
         let cleanModel = model.replacingOccurrences(of: "models/", with: "")
-        guard let encodedKey = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(cleanModel):generateContent?key=\(encodedKey)") else {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(cleanModel):generateContent") else {
             return (nil, telemetry, "Invalid Gemini URL.")
         }
 
@@ -693,6 +759,7 @@ final class AISearchService {
         req.httpMethod = "POST"
         req.timeoutInterval = 25
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
 
         let payload: [String: Any] = [
             "systemInstruction": [
@@ -846,6 +913,9 @@ final class AISearchService {
         apiKey: String
     ) async -> (songs: [[String: String]]?, telemetry: APICallTelemetry, error: String?) {
         var telemetry = APICallTelemetry()
+        guard !apiKey.isEmpty else {
+            return (nil, telemetry, AppConfig.isSpanishSystem ? "Falta colocar la API Key de Anthropic." : "Anthropic API Key required.")
+        }
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
             return (nil, telemetry, "Invalid Anthropic URL.")
         }
@@ -859,7 +929,7 @@ final class AISearchService {
 
         let payload: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": 2048,
             "system": systemInstruction,
             "messages": [
                 ["role": "user", "content": prompt]

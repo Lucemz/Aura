@@ -41,7 +41,7 @@
     <string>Aura necesita permiso para importar tus canciones y playlists desde Apple Music.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSAllowsArbitraryLoads</key>
+        <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
 </dict>

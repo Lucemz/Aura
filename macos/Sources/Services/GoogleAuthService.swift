@@ -1,9 +1,11 @@
 import Foundation
 import WebKit
+import Cocoa
 
 @MainActor
 final class GoogleAuthService {
     static let shared = GoogleAuthService()
+    private var isAuthenticating = false
 
     /// Restores cached Google/YouTube cookies (`google-cookies.json`) into Safari's `WKWebsiteDataStore`
     func restoreCachedCookiesIntoWebKit() async {
@@ -73,8 +75,29 @@ final class GoogleAuthService {
     /// Launches real Google Chrome for 100% trusted Google Sign-In, extracts all cookies via CDP,
     /// saves them to `google-cookies.json`, and injects them into Safari's `WKWebsiteDataStore`.
     func authenticateViaExternalChrome() async -> Bool {
-        let chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        guard FileManager.default.fileExists(atPath: chromePath) else {
+        if isAuthenticating { return false }
+        isAuthenticating = true
+        defer { isAuthenticating = false }
+
+        let candidatePaths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "\(NSHomeDirectory())/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            "\(NSHomeDirectory())/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "\(NSHomeDirectory())/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+        guard let chromePath = candidatePaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = AppConfig.isSpanishSystem
+                ? "Navegador compatible requerido para iniciar sesión"
+                : "Compatible Browser Required for Sign-In"
+            alert.informativeText = AppConfig.isSpanishSystem
+                ? "Aura utiliza Google Chrome, Brave o Microsoft Edge para completar el inicio de sesión seguro de Google y sincronizar tu cuenta con el motor Safari WebKit."
+                : "Aura uses Google Chrome, Brave, or Microsoft Edge to complete secure Google Sign-In and sync your session with the Safari WebKit engine."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
             return false
         }
 
@@ -82,8 +105,9 @@ final class GoogleAuthService {
         try? FileManager.default.createDirectory(at: profileDir, withIntermediateDirectories: true)
 
         let debugPort = Int.random(in: 19300...19899)
+        let hl = AppConfig.isSpanishSystem ? "es" : "en"
         let loginUrl =
-            "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Des%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F%26feature%3Dsign_in_button&hl=es"
+            "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3D\(hl)%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F%26feature%3Dsign_in_button&hl=\(hl)"
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: chromePath)
@@ -92,7 +116,6 @@ final class GoogleAuthService {
             "--remote-debugging-port=\(debugPort)",
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-features=WebAuthentication",
             "--window-size=560,740",
             "--app=\(loginUrl)",
         ]
@@ -133,7 +156,7 @@ final class GoogleAuthService {
                 }
                 if hasSapisid {
                     if let savedData = try? JSONSerialization.data(withJSONObject: cookies, options: [.prettyPrinted]) {
-                        try? savedData.write(to: AppConfig.googleCookiesCacheFileURL)
+                        AppConfig.writeSecureData(savedData, to: AppConfig.googleCookiesCacheFileURL)
                     }
                     await injectCookiesIntoWebKit(cookies)
                     process.terminate()

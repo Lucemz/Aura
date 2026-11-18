@@ -6,8 +6,10 @@ final class AppleMusicService {
 
     /// Reads the user's native macOS `Music.app` (`Música`) library and playlists via JXA (`osascript -l JavaScript`)
     func fetchLibrary() async -> [String: Any] {
+        let isEs = AppConfig.isSpanishSystem ? "true" : "false"
         let jxaScript = """
         (function() {
+          const isEs = \(isEs);
           try {
             const music = Application("Music");
             const rawPlaylists = music.userPlaylists();
@@ -51,8 +53,8 @@ final class AppleMusicService {
               playlists.push({
                 id: id,
                 provider: "apple",
-                title: isRootMusic ? (name + " (Biblioteca Completa)") : name,
-                description: isFav ? "Favoritas en Apple Music" : (isRootMusic ? "Toda tu biblioteca" : "Playlist de Apple Music"),
+                title: isRootMusic ? (name + (isEs ? " (Biblioteca Completa)" : " (Full Library)")) : name,
+                description: isFav ? (isEs ? "Favoritas en Apple Music" : "Apple Music Favorites") : (isRootMusic ? (isEs ? "Toda tu biblioteca" : "Entire library") : (isEs ? "Playlist de Apple Music" : "Apple Music Playlist")),
                 trackCount: count,
                 thumbnail: ""
               });
@@ -84,7 +86,7 @@ final class AppleMusicService {
             return JSON.stringify({
               ok: true,
               profile: {
-                name: "App Música (macOS)",
+                name: isEs ? "App Música (macOS)" : "Music App (macOS)",
                 avatar: ""
               },
               totalLiked: combined.length,
@@ -95,7 +97,7 @@ final class AppleMusicService {
           } catch (err) {
             return JSON.stringify({
               ok: false,
-              error: "No se pudo leer la app Música de tu Mac: " + String(err.message || err),
+              error: (isEs ? "No se pudo leer la app Música de tu Mac: " : "Could not read your Mac Music app: ") + String(err.message || err),
               likedSongs: [],
               playlists: [],
               albums: []
@@ -112,7 +114,9 @@ final class AppleMusicService {
 
         return [
             "ok": false,
-            "error": "Asegúrate de tener la app Música instalada y darle permiso a Aura cuando macOS lo solicite.",
+            "error": AppConfig.isSpanishSystem
+                ? "Asegúrate de tener la app Música instalada y darle permiso a Aura cuando macOS lo solicite."
+                : "Make sure the macOS Music app is installed and grant Aura permission when prompted.",
             "likedSongs": [],
             "playlists": [],
             "albums": [],
@@ -121,19 +125,22 @@ final class AppleMusicService {
 
     /// Reads all tracks of a specific playlist in `Music.app` by its `persistentID`
     func fetchPlaylistTracks(playlistId: String) async -> [[String: Any]] {
-        let safeId = playlistId.replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "'", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !safeId.isEmpty else { return [] }
+        let trimmed = playlistId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idData = try? JSONSerialization.data(withJSONObject: [playlistId]),
+              let idJSON = String(data: idData, encoding: .utf8) else {
+            return []
+        }
 
         let jxaScript = """
         (function() {
           try {
+            const targetId = (\(idJSON))[0];
             const music = Application("Music");
             const pls = music.userPlaylists();
             let target = null;
             for (let i = 0; i < pls.length; i++) {
-              if (String(pls[i].persistentID()) === "\(safeId)") {
+              if (String(pls[i].persistentID()) === targetId) {
                 target = pls[i];
                 break;
               }
